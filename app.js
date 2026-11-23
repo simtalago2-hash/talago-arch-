@@ -341,21 +341,45 @@ function cachedHatch(el, k) {
   return entry.sets;
 }
 /** Draw a hatch. S maps hatch-space points to screen; unitPx = screen px per hatch-space unit. */
+/** Draw a hatch. S maps hatch-space points to screen; unitPx = screen px per hatch-space unit.
+ *  Each stroke is a fine line that gains weight where the pen lands and lifts, like a drawn hatch.
+ *  Drawn in three batched passes (fine body, then two end-hit passes) to stay fast. */
 function drawHatch(ctx, el, S, unitPx, ws, color) {
   const v = HATCH_VALUES[el.v] || HATCH_VALUES[1];
   const k = Math.max(1, Math.ceil(2.4 / (v.sp * unitPx)));     // thin out when zoomed far out
-  ctx.strokeStyle = color; ctx.lineCap = 'round';
-  ctx.lineWidth = clamp(0.7 * ws, 0.55, 1.6);
-  ctx.beginPath();
+  const w = clamp(0.62 * ws, 0.5, 1.5);
+  const body = new Path2D(), hitA = new Path2D(), hitB = new Path2D();
   let n = 0;
   for (const segs of cachedHatch(el, k)) for (const [p0, p1] of segs) {
     const a = S(p0), b = S(p1);
-    const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+    const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
     const bow = ((((n++) * 9301 + 49297) % 233280) / 233280 - 0.5) * Math.min(1.2, L * 0.02);
-    ctx.moveTo(a.x, a.y);
-    ctx.quadraticCurveTo((a.x + b.x) / 2 - dy / L * bow, (a.y + b.y) / 2 + dx / L * bow, b.x, b.y);
+    body.moveTo(a.x, a.y);
+    body.quadraticCurveTo((a.x + b.x) / 2 - uy * bow, (a.y + b.y) / 2 + ux * bow, b.x, b.y);
+    // End hits: a short medium-weight run, and a shorter heavy tip, at both ends.
+    const r1 = Math.min(6 * Math.max(ws, 0.8), L * 0.24), r2 = Math.min(2.6 * Math.max(ws, 0.8), L * 0.11);
+    hitA.moveTo(a.x, a.y); hitA.lineTo(a.x + ux * r1, a.y + uy * r1);
+    hitA.moveTo(b.x, b.y); hitA.lineTo(b.x - ux * r1, b.y - uy * r1);
+    hitB.moveTo(a.x, a.y); hitB.lineTo(a.x + ux * r2, a.y + uy * r2);
+    hitB.moveTo(b.x, b.y); hitB.lineTo(b.x - ux * r2, b.y - uy * r2);
   }
-  ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineCap = 'round';
+  ctx.lineWidth = w; ctx.stroke(body);
+  ctx.lineWidth = w * 1.4; ctx.stroke(hitA);
+  ctx.lineWidth = w * 1.95; ctx.stroke(hitB);
+}
+/** Ramer–Douglas–Peucker simplification of an open polyline (screen px). */
+function simplifyPath(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  let idx = -1, dmax = 0;
+  const a = pts[0], b = pts[pts.length - 1], dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i];
+    const d = L < 1e-9 ? Math.hypot(p.x - a.x, p.y - a.y) : Math.abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) / L;
+    if (d > dmax) { dmax = d; idx = i; }
+  }
+  if (dmax <= eps) return [a, b];
+  return simplifyPath(pts.slice(0, idx + 1), eps).slice(0, -1).concat(simplifyPath(pts.slice(idx), eps));
 }
 function pointInPoly(pt, poly) {
   let inside = false;
@@ -730,6 +754,36 @@ const Editor = {
     const s = ep ? this.toScreen(this.isAxo ? ep : { x: ep.x, y: ep.y }) : pos;
     return this.toHatch(s.x, s.y);
   },
+  /** Snap one screen point for a hatch corner: existing corner first, then the (half-)grid on the plan. */
+  hatchCorner(pos) {
+    const ep = this.nearestEndpoint(pos);
+    if (ep) { const s = this.toScreen(this.isAxo ? ep : { x: ep.x, y: ep.y }); return this.toHatch(s.x, s.y); }
+    const st = this.snapStep(), w = this.toPlane(pos.x, pos.y, 0), g = { x: roundTo(w.x, st), y: roundTo(w.y, st) };
+    if (!this.isAxo) return g;
+    const s = this.toScreen(g); return this.toHatch(s.x, s.y);
+  },
+  /** The hatch outline from a freehand loop. With Snap on, the loop is straightened between
+   *  corners and the corners land on grid dots or existing line ends. */
+  lassoPolygon(raw) {
+    const toS = this.hatchToScreen({ view: this.isAxo });
+    if (!Store.settings.snap) return raw.map(p => { const s = toS(p); return this.lassoPoint(s); });
+    const scr = raw.map(toS);
+    const eps = Math.max(7, 0.45 * gridUnitPx(this.view.z, this.proj) * this.snapStep());
+    let poly = simplifyPath(scr, eps).map(s => this.hatchCorner(s));
+    const same = (p, q) => Math.abs(p.x - q.x) < 1e-6 && Math.abs(p.y - q.y) < 1e-6;
+    poly = poly.filter((p, i) => i === 0 || !same(p, poly[i - 1]));
+    while (poly.length > 1 && same(poly[0], poly[poly.length - 1])) poly.pop();
+    // Drop corners that sit on a straight run.
+    let changed = true;
+    while (changed && poly.length > 3) {
+      changed = false;
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[(i + poly.length - 1) % poly.length], q = poly[i], r = poly[(i + 1) % poly.length];
+        if (Math.abs((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)) < 1e-6) { poly.splice(i, 1); changed = true; break; }
+      }
+    }
+    return poly;
+  },
   endpoints() {
     const out = [];
     for (const el of this.sketch.lines) if (isLine(el)) out.push(el.a, el.b);
@@ -842,7 +896,7 @@ const Editor = {
       this.erasing = { id: e.pointerId, removed: [], before: this.snapshot() };
       this.eraseAt(pos);
     } else if (this.tool === 'hatch') {
-      this.lasso = { id: e.pointerId, pts: [this.lassoPoint(pos)] };
+      this.lasso = { id: e.pointerId, pts: [this.toHatch(pos.x, pos.y)] };
     } else if (this.tool === 'pencil') {
       // In axo, a pencil stroke started on a corner is drawn on the level of that corner.
       const ep = this.isAxo ? this.nearestEndpoint(pos) : null;
@@ -869,7 +923,7 @@ const Editor = {
     if (this.lasso && this.lasso.id === e.pointerId) {
       const pts = this.lasso.pts, minD = 4 / this.view.z;
       for (const ce of (coalesced.length ? coalesced : [e])) {
-        const lp = this.local(ce), w = this.lassoPoint(lp), last = pts[pts.length - 1];
+        const lp = this.local(ce), w = this.toHatch(lp.x, lp.y), last = pts[pts.length - 1];
         if (Math.hypot(w.x - last.x, w.y - last.y) > minD) pts.push(w);
       }
       return this.render();
@@ -909,14 +963,15 @@ const Editor = {
     }
     if (this.lasso && this.lasso.id === e.pointerId) {
       const ls = this.lasso; this.lasso = null;
-      if (!cancelled && ls.pts.length >= 3) {
+      const poly = ls.pts.length >= 3 ? this.lassoPolygon(ls.pts) : [];
+      if (!cancelled && poly.length >= 3) {
         const sc = this.hatchToScreen({ view: this.isAxo })
-        const scr = ls.pts.map(sc);
+        const scr = poly.map(sc);
         let area = 0;
         for (let i = 0; i < scr.length; i++) { const p = scr[i], q = scr[(i + 1) % scr.length]; area += p.x * q.y - q.x * p.y; }
         if (Math.abs(area) / 2 > 150) {
           const s = Store.settings, before = this.snapshot();
-          const el = { t: 'h', pts: ls.pts.map(p => ({ x: r3(p.x), y: r3(p.y) })), pat: s.hatch, v: s.hval, c: s.color, seed: Math.floor(Math.random() * 1e9) };
+          const el = { t: 'h', pts: poly.map(p => ({ x: r3(p.x), y: r3(p.y) })), pat: s.hatch, v: s.hval, c: s.color, seed: Math.floor(Math.random() * 1e9) };
           if (this.isAxo) el.view = axoKey(this.sketch);
           this.sketch.lines.push(el);
           this.commit(before);
@@ -1205,12 +1260,19 @@ const Editor = {
     const pw = PEN_WEIGHTS[s.pen], ws = weightScale(this.view.z), ink = INKS[s.color].hex;
     if (this.lasso && this.lasso.pts.length > 1) {
       const sc = this.hatchToScreen({ view: this.isAxo });
-      const pts = this.lasso.pts.map(sc);
+      const snapped = Store.settings.snap && this.lasso.pts.length >= 3;
+      const pts = (snapped ? this.lassoPolygon(this.lasso.pts) : this.lasso.pts).map(sc);
       ctx.save();
+      if (snapped) {   // faint trace of the finger, then the snapped outline
+        ctx.strokeStyle = 'rgba(175,49,41,.25)'; ctx.lineWidth = 1;
+        ctx.beginPath(); this.lasso.pts.map(sc).forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke();
+      }
       ctx.strokeStyle = RED; ctx.lineWidth = 1.2; ctx.setLineDash([4, 4]);
       ctx.fillStyle = 'rgba(175,49,41,.06)';
       ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
-      ctx.fill(); ctx.stroke(); ctx.restore();
+      ctx.fill(); ctx.stroke();
+      if (snapped) { ctx.setLineDash([]); ctx.fillStyle = RED; for (const p of pts) { ctx.beginPath(); ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2); ctx.fill(); } }
+      ctx.restore();
     }
     if (this.stroke) {
       ctx.globalAlpha = 0.92 * (pw.alpha || 1);
