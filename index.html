@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
-<meta name="theme-color" content="#a3222a">
+<meta name="theme-color" content="#af3129">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,27 +13,56 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="preload" href="fonts/CormorantGaramond.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="fonts/ArchitectsDaughter.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/Inter.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
+<!-- Reusable icons -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M6 3h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6.5A1.5 1.5 0 0 1 5 19.5v-15A1.5 1.5 0 0 1 6.5 3M5 18.5A1.5 1.5 0 0 1 6.5 17H18"/></symbol>
+    <symbol id="i-book-open" viewBox="0 0 24 24"><path d="M12 6.5C10.5 5 8 4.5 3 4.5v14c5 0 7.5.5 9 2 1.5-1.5 4-2 9-2v-14c-5 0-7.5.5-9 2zM12 6.5v14"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M10 4l1.6 4.4L16 10l-4.4 1.6L10 16l-1.6-4.4L4 10l4.4-1.6zM18 3v4M16 5h4M7 18a1.5 1.5 0 1 0 0 .01"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3M7.5 7.5L12 3l4.5 4.5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></symbol>
+    <symbol id="i-line" viewBox="0 0 24 24"><path d="M5 19L19 5"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></symbol>
+    <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M7 21h12M5.5 16.5l9.6-9.6a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L11 19H8z"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6-2.4l-3.6-3.6a2 2 0 0 1 2.8-2.8L7 15"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  </defs>
+</svg>
 
 <main id="app">
   <!-- Table of contents -->
   <section id="view-toc" class="view page" hidden>
     <div class="page-inner">
-      <header class="page-head">
-        <div class="kicker">Talago Arch</div>
-        <h1>Contents</h1>
+      <header class="topbar">
+        <div class="brand"><span class="logo">Ta</span><span class="brand-name">Talago Arch</span></div>
+        <div class="top-actions">
+          <button type="button" class="icon-btn" id="toc-ai" aria-label="ChatGPT and backups"><svg><use href="#i-spark"/></svg></button>
+          <button type="button" class="icon-btn" id="toc-close" aria-label="Close notebook"><svg><use href="#i-book"/></svg></button>
+        </div>
       </header>
-      <ol id="project-list" class="toc"></ol>
-      <button id="add-project" class="add-line" type="button"><span class="plus">+</span> New project</button>
+      <div class="kicker">Your personal notebook <svg><use href="#i-book-open"/></svg></div>
+      <h1>Table of contents<span class="dot">.</span></h1>
+      <p class="lede">A home for every project, and every possibility.</p>
+      <button id="add-project" class="btn-red" type="button"><svg><use href="#i-plus"/></svg> Add project</button>
+      <div class="table-head"><span>Project</span><span>Sketches</span></div>
+      <ol id="project-list" class="rows"></ol>
       <footer class="page-foot">
-        <button id="install-btn" class="link" type="button" hidden>Install app</button>
-        <button id="export-btn" class="link" type="button">Back up notebook</button>
-        <label class="link">Restore backup<input type="file" id="import-input" accept="application/json,.json" hidden></label>
-        <p id="install-tip" class="tip" hidden></p>
+        <span>Ideas worth keeping.</span>
+        <span class="foot-right"><span id="toc-count">0 projects</span> <i>/</i> Talago Arch</span>
       </footer>
     </div>
   </section>
@@ -41,48 +70,64 @@
   <!-- Project -->
   <section id="view-project" class="view page" hidden>
     <div class="page-inner">
-      <header class="page-head row">
-        <button class="back" id="proj-back" type="button">‹ Contents</button>
-        <button class="icon-btn" id="proj-menu" type="button" aria-label="Project options">⋯</button>
+      <header class="topbar">
+        <button type="button" class="crumb" id="proj-back"><svg><use href="#i-back"/></svg> Table of contents</button>
+        <div class="top-actions">
+          <button type="button" class="icon-btn" id="proj-menu" aria-label="Project options"><svg><use href="#i-more"/></svg></button>
+        </div>
       </header>
       <div class="kicker" id="proj-kicker"></div>
-      <h1 id="proj-title"></h1>
+      <h1><span id="proj-title"></span><span class="dot">.</span></h1>
+      <p class="lede" id="proj-lede"></p>
+      <button id="add-sketch" class="btn-red" type="button"><svg><use href="#i-plus"/></svg> New sketch</button>
+      <div class="table-head"><span>Sketches</span><span></span></div>
       <div id="sketch-grid" class="sketch-grid"></div>
+      <footer class="page-foot">
+        <span>Ideas worth keeping.</span>
+        <span class="foot-right">Talago Arch</span>
+      </footer>
     </div>
   </section>
 
-  <!-- Sketch -->
+  <!-- Sketch: full screen, no border -->
   <section id="view-sketch" class="view" hidden>
     <canvas id="canvas" aria-label="Drawing canvas"></canvas>
-    <div class="hud-top">
-      <button id="sk-back" class="chip" type="button">‹ <span id="sk-proj"></span></button>
-      <div id="sk-title" class="sk-title"></div>
-      <button id="sk-share" class="chip icon" type="button" aria-label="Share sketch">
-        <svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>
-      </button>
-      <button id="sk-menu" class="chip icon" type="button" aria-label="More options">
-        <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
-      </button>
+
+    <div class="sk-top">
+      <div class="sk-group">
+        <button type="button" class="tb" id="sk-back" aria-label="Back to project"><svg><use href="#i-back"/></svg></button>
+        <button type="button" class="tb" data-act="undo" aria-label="Undo"><svg><use href="#i-undo"/></svg></button>
+        <button type="button" class="tb" data-act="redo" aria-label="Redo"><svg><use href="#i-redo"/></svg></button>
+        <span class="sep"></span>
+        <button type="button" class="tb" data-act="clear" aria-label="Clear sketch"><svg><use href="#i-trash"/></svg></button>
+      </div>
+      <div class="sk-name" id="sk-title"></div>
+      <div class="sk-group">
+        <button type="button" class="tb" id="sk-share" aria-label="Share sketch"><svg><use href="#i-share"/></svg></button>
+        <button type="button" class="tb" id="sk-menu" aria-label="More options"><svg><use href="#i-more"/></svg></button>
+      </div>
     </div>
-    <div id="scale-chip" class="scale-chip"></div>
+
     <nav class="toolbar" id="toolbar">
-      <button type="button" data-act="ortho" title="Ortho (O)">
-        <svg viewBox="0 0 24 24"><path d="M4 20h16M4 20V4M4 20L18 6"/></svg><span>Ortho</span></button>
-      <button type="button" data-act="snap" title="Snap to grid (G)">
-        <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="1.3"/><circle cx="12" cy="6" r="1.3"/><circle cx="18" cy="6" r="1.3"/><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="2.6"/><circle cx="18" cy="12" r="1.3"/><circle cx="6" cy="18" r="1.3"/><circle cx="12" cy="18" r="1.3"/><circle cx="18" cy="18" r="1.3"/></svg><span>Snap</span></button>
-      <button type="button" data-act="dims" title="Show dimensions (D)">
-        <svg viewBox="0 0 24 24"><path d="M3 15h18M3 11v8M21 11v8M8 9h8"/></svg><span>Dims</span></button>
-      <button type="button" data-act="erase" title="Eraser (E)">
-        <svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6l-3-3z M9 10l5 5 M10 18h10"/></svg><span>Erase</span></button>
-      <button type="button" data-act="pen" title="Line weight (W)">
-        <svg viewBox="0 0 24 24"><path id="pen-ico" d="M4 12h16"/></svg><span id="pen-label">Pen</span></button>
-      <button type="button" data-act="grid" title="Grid spacing">
-        <svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M9 4v16M15 4v16"/></svg><span id="grid-label">1'</span></button>
-      <button type="button" data-act="undo" title="Undo (Ctrl+Z)">
-        <svg viewBox="0 0 24 24"><path d="M9 7L4 12l5 5M4 12h11a5 5 0 0 1 0 10h-2"/></svg><span>Undo</span></button>
-      <button type="button" data-act="redo" title="Redo (Ctrl+Shift+Z)">
-        <svg viewBox="0 0 24 24"><path d="M15 7l5 5-5 5M20 12H9a5 5 0 0 0 0 10h2"/></svg><span>Redo</span></button>
+      <button type="button" class="tool" data-tool="line" aria-label="Straight line (L)"><svg><use href="#i-line"/></svg></button>
+      <button type="button" class="tool" data-tool="pencil" aria-label="Pencil (P)"><svg><use href="#i-pencil"/></svg></button>
+      <button type="button" class="tool" data-tool="erase" aria-label="Eraser (E)"><svg><use href="#i-eraser"/></svg></button>
+      <button type="button" class="tool" data-tool="hand" aria-label="Pan (H)"><svg><use href="#i-hand"/></svg></button>
+      <span class="sep"></span>
+      <button type="button" class="swatch-btn" data-act="pen" aria-label="Ink and weight"><span class="swatch" id="pen-swatch"></span><svg class="caret"><use href="#i-down"/></svg></button>
+      <button type="button" class="txt" data-act="ortho" aria-label="Ortho mode (O)">Ortho</button>
+      <button type="button" class="txt" data-act="grid" aria-label="Grid spacing"><span id="grid-label">1'</span></button>
     </nav>
+
+    <div class="sk-bottom">
+      <div class="zoom">
+        <button type="button" class="tb" data-act="zoom-out" aria-label="Zoom out"><svg><use href="#i-minus"/></svg></button>
+        <button type="button" class="zoom-val" data-act="fit" id="zoom-val" aria-label="Fit drawing">100%</button>
+        <button type="button" class="tb" data-act="zoom-in" aria-label="Zoom in"><svg><use href="#i-plus"/></svg></button>
+        <button type="button" class="tb" data-act="fullscreen" id="fs-btn" aria-label="Full screen"><svg><use href="#i-expand"/></svg></button>
+      </div>
+      <div class="status" id="save-status">Saved to notebook</div>
+    </div>
   </section>
 </main>
 
@@ -90,13 +135,12 @@
 <div id="cover" class="cover" role="button" aria-label="Open notebook">
   <div class="cover-leaf">
     <div class="cover-face">
-      <div class="cover-emboss">
+      <div class="cover-mark">
         <div class="cover-mono">Ta</div>
         <div class="cover-title">Talago Arch</div>
-        <div class="cover-rule"></div>
-        <div class="cover-sub">Sketchbook</div>
+        <div class="cover-sub">Personal sketchbook</div>
       </div>
-      <div class="cover-hint">tap to open</div>
+      <div class="cover-open">Open notebook <svg><use href="#i-book-open"/></svg></div>
     </div>
     <div class="cover-back"></div>
   </div>

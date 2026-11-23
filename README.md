@@ -4,17 +4,22 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
 
 ## Features
 
-- **Red notebook cover** fills the screen and flips open on launch. It reopens on the last page you were on.
-- **Contents page** lists your projects. Tap **+ New project**, open a project, then tap **+ New sketch**.
-- **Full-screen sketch pages** with dot grid, no border.
-- **Auto-straightened lines**: drag anywhere and you get a clean straight line from start to finish, heavier at both ends. Three pen weights (Fine / Med / Bold).
-- **Ortho mode** (button or **O**): lines lock to horizontal, vertical, or 45°.
-- **Snap** (button or **G**): endpoints snap to grid dots. Line ends also snap to existing line endpoints, and in ortho mode a line stops where it lines up with an existing endpoint.
-- **Grid spacing**: set what one dot-to-dot space represents, from 1' to 20' in ½' steps. The drawing doesn't rescale. Lengths show live while drawing, and **Dims** (or **D**) shows dimensions on every line.
-- **Eraser** (or **E**), **undo / redo** (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z).
-- **Pan and zoom**: two-finger drag / pinch on touch, scroll wheel or trackpad on desktop. Press **F** to fit the drawing to the screen. With an Apple Pencil or stylus, one finger pans so your palm won't draw.
-- **Share with ChatGPT**: the Share button sends a PNG plus a text description (coordinates and lengths in feet) to any app, including ChatGPT. The ⋯ menu can also copy the text version or download a PNG.
-- **Back up / restore** the whole notebook as a JSON file from the Contents page.
+- **Red notebook cover** fills the screen and flips open on launch. It reopens on the last page you were on. The book icon on the Contents page closes the notebook again.
+- **Table of contents** lists your projects with **+ Add project**. Open a project and tap **+ New sketch**. Long-press a project (or use ⋯ inside it) to rename, reorder or delete it.
+- **Full-screen sketch pages** with a dot grid and no border.
+- **Tools** (bottom toolbar):
+  - **Straight line** (L): drag and you get a clean line from A to B, heavier at both ends.
+  - **Pencil** (P): freehand strokes.
+  - **Eraser** (E).
+  - **Hand** (H): pan.
+  - **Pen colour and weight**.
+  - **Ortho** (O): lines lock to horizontal, vertical or 45°.
+  - **Grid**: spacing from 1' to 20' in ½' steps.
+- **Snap** (G, in the ⋯ menu): line ends land on grid dots and existing endpoints. In ortho mode a line also stops where it lines up with an existing endpoint.
+- **Dimensions**: length and angle show live while drawing. **Show dimensions** (D) labels every line in feet and inches, based on the grid spacing. The drawing itself isn't rescaled.
+- **Undo / redo / clear** at the top. Zoom − / % / + and full screen at the bottom (tap the % to fit the drawing), plus a "Saved to notebook" status. Pinch to zoom and two fingers to pan on touch. With an Apple Pencil, one finger pans.
+- **Share with ChatGPT**: the Share button sends a PNG plus a text description (coordinates and lengths in feet) to any app, including ChatGPT. The ✦ button on the Contents page copies a summary of the whole notebook.
+- **Back up / restore** the notebook as a file (✦ menu).
 - **Works offline** and installs to your home screen as an app.
 
 ## Install on your phone
@@ -46,7 +51,7 @@ python3 -m http.server 8000
 | File | Purpose |
 | --- | --- |
 | `index.html` | App shell: cover, contents, project and sketch views |
-| `styles.css` | Moleskine-style look (Cormorant Garamond + Architects Daughter, bundled in `fonts/`) |
+| `styles.css` | Look and layout (Helvetica Neue on Apple devices, bundled Inter elsewhere) |
 | `app.js` | Storage, navigation, drawing engine, export/share |
 | `sw.js` | Offline cache + update handling |
 | `manifest.webmanifest`, `icons/` | Home-screen install and the red "Ta" icon |
