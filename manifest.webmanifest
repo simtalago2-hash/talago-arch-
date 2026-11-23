@@ -1,0 +1,18 @@
+{
+  "name": "Talago Arch",
+  "short_name": "Talago Arch",
+  "description": "A personal drafting sketchbook: dotted pages, auto-straightened lines, ortho mode and grid dimensions.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#a3222a",
+  "theme_color": "#a3222a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
