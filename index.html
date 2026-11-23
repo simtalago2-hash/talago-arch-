@@ -75,14 +75,21 @@
         <span class="e-num" id="proj-num"></span>
         <div><h1 class="e-name" id="proj-title"></h1><div class="e-meta" id="proj-lede"></div></div>
       </div>
+      <nav class="proj-tabs" id="proj-tabs" role="tablist">
+        <button type="button" role="tab" data-tab="sketches">Sketches <span class="ct" id="ct-sketches"></span></button>
+        <button type="button" role="tab" data-tab="schedules">Schedules <span class="ct" id="ct-schedules"></span></button>
+      </nav>
       <div class="dots"></div>
-      <button id="add-sketch" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New sketch</span></button>
-      <div class="dots"></div>
-      <div id="sketch-grid" class="sketch-grid"></div>
-      <div class="dots"></div>
-      <button id="add-schedule" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New schedule</span></button>
-      <div class="dots"></div>
-      <div id="schedule-grid" class="sketch-grid"></div>
+      <div class="tab-pane" id="tab-sketches" role="tabpanel">
+        <button id="add-sketch" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New sketch</span></button>
+        <div class="dots"></div>
+        <div id="sketch-grid" class="sketch-grid"></div>
+      </div>
+      <div class="tab-pane" id="tab-schedules" role="tabpanel" hidden>
+        <button id="add-schedule" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New schedule</span></button>
+        <div class="dots"></div>
+        <div id="schedule-grid" class="sketch-grid"></div>
+      </div>
       <div class="dots end"></div>
       <footer class="diary-foot"><span>Talago Arch</span><span id="proj-count"></span></footer>
     </div>

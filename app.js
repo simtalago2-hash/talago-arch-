@@ -1437,7 +1437,7 @@ function route() {
     if (m[3]) {
       const sch = Store.schedule(p, m[3]);
       if (!sch) return go(`#/p/${p.id}`);
-      Store.data.last = { p: p.id, g: sch.id }; Store.save();
+      Store.data.last = { p: p.id, g: sch.id }; projectTab(p, 'schedules');
       show('schedule');
       Schedule.open(p, sch);
       return;
@@ -1445,7 +1445,7 @@ function route() {
     if (m[2]) {
       const s = Store.sketch(p, m[2]);
       if (!s) return go(`#/p/${p.id}`);
-      Store.data.last = { p: p.id, s: s.id }; Store.save();
+      Store.data.last = { p: p.id, s: s.id }; projectTab(p, 'sketches');
       show('sketch');
       Editor.open(p, s);
       enterFullscreen();
@@ -1552,7 +1552,7 @@ async function projectMenu(p) {
     if (i > 0) { ps.splice(i, 1); ps.splice(i - 1, 0, p); Store.save(); }
   } else if (v === 'delete') {
     if (await confirmBox(`Delete “${p.name}”?`, `This removes the project, its ${plural(p.sketches.length, 'sketch', 'sketches')} and ${plural(p.schedules.length, 'schedule', 'schedules')} from this device. This can't be undone.`)) {
-      Store.data.projects.splice(Store.data.projects.indexOf(p), 1); Store.save();
+      Store.data.projects.splice(Store.data.projects.indexOf(p), 1); if (Store.data.tabs) delete Store.data.tabs[p.id]; Store.save();
       if (currentView !== 'toc') return go('#/');
     }
   }
@@ -1561,9 +1561,29 @@ async function projectMenu(p) {
 
 /* ---------- project ---------- */
 let currentProject = null;
+/** Which section (sketches / schedules) a project page shows; remembered per project. */
+function projectTab(p, set) {
+  const tabs = Store.data.tabs || (Store.data.tabs = {});
+  if (set) { tabs[p.id] = set; Store.save(); }
+  return tabs[p.id] || (p.sketches.length || !p.schedules.length ? 'sketches' : 'schedules');
+}
+function showTab(p) {
+  const tab = projectTab(p);
+  $$('#proj-tabs [data-tab]').forEach(b => { const on = b.dataset.tab === tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+  $('#tab-sketches').hidden = tab !== 'sketches';
+  $('#tab-schedules').hidden = tab !== 'schedules';
+  $('#ct-sketches').textContent = pad2(p.sketches.length);
+  $('#ct-schedules').textContent = pad2(p.schedules.length);
+}
+$('#proj-tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]'); if (!b || !currentProject) return;
+  projectTab(currentProject, b.dataset.tab); showTab(currentProject);
+  if (b.dataset.tab === 'sketches') requestAnimationFrame(() => $$('#sketch-grid [data-thumb]').forEach(c => renderThumb(c, Store.sketch(currentProject, c.dataset.thumb))));
+});
 function renderProject(p) {
   normProject(p);
   currentProject = p;
+  showTab(p);
   $('#proj-num').textContent = Store.data.projects.indexOf(p) + 1;
   $('#proj-title').textContent = p.name;
   $('#proj-lede').textContent = `${countsText(p)} · Updated ${fmtDate(p.updated)}`;

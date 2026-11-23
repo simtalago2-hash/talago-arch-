@@ -333,3 +333,13 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke
 /* The gantt SVGs must not inherit the 22px icon sizing/stroke defaults */
 .sch-head svg,.sch-tl svg{fill:none;stroke:none;stroke-width:1;overflow:visible}
 .sch-thumb{height:auto;fill:none;stroke:none}
+
+/* Project sections: Sketches | Schedules */
+.proj-tabs{display:flex;gap:28px;padding:4px 0 12px}
+.proj-tabs button{position:relative;font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);padding:8px 0 9px}
+.proj-tabs button .ct{letter-spacing:0;font-variant-numeric:tabular-nums;color:var(--faint);margin-left:4px}
+.proj-tabs button.on{color:var(--sheet-ink)}
+.proj-tabs button.on .ct{color:var(--red)}
+.proj-tabs button.on::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--red);border-radius:1px}
+.tab-pane{display:flex;flex-direction:column}
+.tab-pane[hidden]{display:none}
