@@ -99,6 +99,17 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke
 .sk-top>*{pointer-events:auto}
 .sk-group{display:flex;align-items:center;gap:2px;background:rgba(252,252,248,.82);border-radius:12px;
   -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.sk-mid{flex:1;display:flex;align-items:center;justify-content:center;gap:4px;min-width:0}
+.seg{display:flex;padding:3px;border-radius:11px;background:rgba(233,235,224,.92);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.seg button{height:34px;padding:0 13px;border-radius:8px;font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.seg button.on{background:#fefffa;color:var(--ink);box-shadow:0 1px 3px rgba(44,46,41,.18)}
+.sk-top .axo-only{display:none;background:rgba(252,252,248,.82)}
+#view-sketch.axo .sk-top .axo-only{display:flex}
+@media (max-width:430px){
+  .sk-top{gap:4px;padding-left:calc(var(--safe-l) + 4px);padding-right:calc(var(--safe-r) + 4px)}
+  .sk-top .tb{width:38px} .sk-top .sep{margin:0 2px}
+  .seg button{padding:0 9px;font-size:12.5px}
+}
 .sk-name{flex:1;text-align:center;font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);pointer-events:none;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tb{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--ink)}
@@ -197,4 +208,4 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke
 
 @keyframes fade{from{opacity:0}to{opacity:1}}
 @keyframes rise{from{transform:translateY(16px);opacity:.6}to{transform:none;opacity:1}}
-@media (max-width:480px){ .sk-name{visibility:hidden} }
+

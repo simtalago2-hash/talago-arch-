@@ -127,7 +127,7 @@ function confirmBox(title, msg, okLabel = 'Delete') {
 function actionSheet(title, actions) {
   return Modal.open(`<h2>${esc(title)}</h2><div class="sheet-list">${actions.map((a, i) =>
     `<button type="button" data-i="${i}" class="${a.danger ? 'danger' : ''}"><span>${esc(a.label)}${a.hint ? `<small>${esc(a.hint)}</small>` : ''}</span>${
-      a.check !== undefined ? `<span class="check ${a.check ? 'on' : ''}">${a.check ? 'On' : 'Off'}</span>` : ''}</button>`).join('')}</div>`,
+      a.check !== undefined ? `<span class="check ${a.check ? 'on' : ''}">${a.check ? 'On' : 'Off'}</span>` : a.sel ? '<span class="check on">✓</span>' : ''}</button>`).join('')}</div>`,
     (c, done) => $$('[data-i]', c).forEach(b => b.onclick = () => done(actions[+b.dataset.i].value)));
 }
 function gridPicker(current) {
@@ -155,6 +155,38 @@ function penPicker() {
       $$('[data-w]', c).forEach(b => b.onclick = () => { s.pen = +b.dataset.w; $$('[data-w]', c).forEach(x => x.classList.toggle('on', x === b)); });
     });
 }
+
+/* ================================================================ projection */
+// Points are 3D in grid units: x, y on the plan, z = height (0 on the plan).
+// A projection maps them onto the page: rotate the plan by r°, scale page-y by k,
+// and lift by z·h. Plan view is r=0, k=1, h=0.
+const AXO_TYPES = {
+  '45': { name: '45° / 45°', hint: 'Plan oblique: true plan shape and true heights', r: 45, k: 1, h: 1 },
+  '30': { name: '30° / 60°', hint: 'Plan oblique, favouring one face', r: 30, k: 1, h: 1 },
+  '60': { name: '60° / 30°', hint: 'Plan oblique, favouring the other face', r: 60, k: 1, h: 1 },
+  'iso': { name: 'Isometric', hint: 'All three axes at 120°', r: 45, k: Math.tan(Math.PI / 6), h: Math.sqrt(2 / 3) },
+};
+const PLAN_PROJ = { r: 0, k: 1, h: 0 };
+function axoParams(sk) {
+  const a = sk.axo || {}, t = AXO_TYPES[a.type] || AXO_TYPES['45'];
+  return { r: t.r + 90 * (a.q || 0), k: t.k, h: t.h };
+}
+function makeProj(pr) {
+  const rad = pr.r * Math.PI / 180, c = Math.cos(rad), s = Math.sin(rad);
+  return {
+    r: pr.r, k: pr.k, h: pr.h,
+    flat: pr.h === 0 && pr.k === 1 && ((pr.r % 360) + 360) % 360 === 0,
+    P(p) { const z = p.z || 0; return { x: p.x * c - p.y * s, y: (p.x * s + p.y * c) * pr.k - z * pr.h }; },
+    /** Page point back to the horizontal plane at height z0. */
+    inv(X, Y, z0 = 0) { const Yr = (Y + z0 * pr.h) / pr.k; return { x: X * c + Yr * s, y: -X * s + Yr * c, z: z0 }; },
+  };
+}
+const PLAN = makeProj(PLAN_PROJ);
+const r3 = v => Math.round(v * 1000) / 1000;
+/** Compact stored point: z only when off the plan. */
+function pt(p) { const o = { x: r3(p.x), y: r3(p.y) }; if (p.z) o.z = r3(p.z); return o; }
+const len3 = (a, b) => Math.hypot(b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0));
+const elevated = el => isFree(el) ? el.pts.some(p => p.z) : !!(el.a.z || el.b.z);
 
 /* ================================================================ drawing primitives */
 function weightScale(z) { return Math.sqrt(z / BASE_Z); }
@@ -198,18 +230,36 @@ function drawFree(ctx, pts, w, color) {
   ctx.stroke();
 }
 
-function drawDots(ctx, view, W, H) {
+/** Dot grid on the plan (z = 0), drawn through the current projection. */
+function drawDots(ctx, view, W, H, proj = PLAN) {
   const { ox, oy, z } = view;
-  let step = 1;
-  while (step * z < 11) step *= 2;
   const r = clamp(z * 0.06, 0.8, 1.6);
-  const x0 = Math.floor(-ox / z / step) * step, x1 = Math.ceil((W - ox) / z / step) * step;
-  const y0 = Math.floor(-oy / z / step) * step, y1 = Math.ceil((H - oy) / z / step) * step;
   ctx.fillStyle = DOT;
   ctx.beginPath();
-  for (let gy = y0; gy <= y1; gy += step) {
-    const sy = oy + gy * z;
-    for (let gx = x0; gx <= x1; gx += step) { const sx = ox + gx * z; ctx.moveTo(sx + r, sy); ctx.arc(sx, sy, r, 0, Math.PI * 2); }
+  if (proj.flat) {
+    let step = 1;
+    while (step * z < 11) step *= 2;
+    const x0 = Math.floor(-ox / z / step) * step, x1 = Math.ceil((W - ox) / z / step) * step;
+    const y0 = Math.floor(-oy / z / step) * step, y1 = Math.ceil((H - oy) / z / step) * step;
+    for (let gy = y0; gy <= y1; gy += step) {
+      const sy = oy + gy * z;
+      for (let gx = x0; gx <= x1; gx += step) { const sx = ox + gx * z; ctx.moveTo(sx + r, sy); ctx.arc(sx, sy, r, 0, Math.PI * 2); }
+    }
+  } else {
+    const O = proj.P({ x: 0, y: 0 }), ex = proj.P({ x: 1, y: 0 }), ey = proj.P({ x: 0, y: 1 });
+    const unit = Math.min(Math.hypot(ex.x - O.x, ex.y - O.y), Math.hypot(ey.x - O.x, ey.y - O.y)) * z;
+    let step = 1;
+    while (step * unit < 11) step *= 2;
+    const cs = [[0, 0], [W, 0], [0, H], [W, H]].map(([sx, sy]) => proj.inv((sx - ox) / z, (sy - oy) / z, 0));
+    let x0 = Math.min(...cs.map(c => c.x)), x1 = Math.max(...cs.map(c => c.x));
+    let y0 = Math.min(...cs.map(c => c.y)), y1 = Math.max(...cs.map(c => c.y));
+    while (((x1 - x0) / step) * ((y1 - y0) / step) > 60000) step *= 2;
+    x0 = Math.floor(x0 / step) * step; y0 = Math.floor(y0 / step) * step;
+    for (let gy = y0; gy <= y1; gy += step) for (let gx = x0; gx <= x1; gx += step) {
+      const q = proj.P({ x: gx, y: gy }), sx = ox + q.x * z, sy = oy + q.y * z;
+      if (sx < -2 || sy < -2 || sx > W + 2 || sy > H + 2) continue;
+      ctx.moveTo(sx + r, sy); ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    }
   }
   ctx.fill();
 }
@@ -231,61 +281,74 @@ function drawDim(ctx, ax, ay, bx, by, label, color, offset = 12) {
   ctx.restore();
 }
 
-/** Render a full scene. view = {ox, oy, z}. Elements in grid units. */
+/** Render a full scene. view = {ox, oy, z}; opts.proj = projection (plan by default). */
 function drawScene(ctx, W, H, els, view, opts = {}) {
+  const proj = opts.proj || PLAN;
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, W, H);
-  drawDots(ctx, view, W, H);
+  drawDots(ctx, view, W, H, proj);
   const ws = weightScale(view.z) * (opts.weightMul || 1);
   const { ox, oy, z } = view;
-  const S = p => ({ x: ox + p.x * z, y: oy + p.y * z });
+  const S = p => { const q = proj.P(p); return { x: ox + q.x * z, y: oy + q.y * z }; };
   for (const el of els) {
     const pw = PEN_WEIGHTS[el.w] || PEN_WEIGHTS[1];
-    const color = el === opts.highlight ? RED : inkOf(el);
+    const hi = el === opts.highlight;
+    const color = hi ? RED : inkOf(el);
+    // In plan, anything drawn above the ground plane is shown lighter.
+    const fade = proj.flat && elevated(el) ? 0.35 : 1;
     if (isFree(el)) {
-      ctx.globalAlpha = el === opts.highlight ? 0.6 : 0.92;
+      ctx.globalAlpha = (hi ? 0.6 : 0.92) * fade;
       drawFree(ctx, el.pts.map(S), pw.free * ws, color);
-      ctx.globalAlpha = 1;
     } else {
-      ctx.globalAlpha = el === opts.highlight ? 0.6 : 1;
-      drawTaper(ctx, ox + el.a.x * z, oy + el.a.y * z, ox + el.b.x * z, oy + el.b.y * z, pw.end * ws, pw.mid * ws, color);
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = (hi ? 0.6 : 1) * fade;
+      const a = S(el.a), b = S(el.b);
+      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, color);
     }
+    ctx.globalAlpha = 1;
   }
   if (opts.dims && opts.gridFt) {
     for (const el of els) {
       if (isFree(el)) continue;
-      const len = Math.hypot(el.b.x - el.a.x, el.b.y - el.a.y);
-      if (len * z < 28) continue;
-      drawDim(ctx, ox + el.a.x * z, oy + el.a.y * z, ox + el.b.x * z, oy + el.b.y * z, fmtFeet(len * opts.gridFt), MUTED);
+      const a = S(el.a), b = S(el.b);
+      if (Math.hypot(b.x - a.x, b.y - a.y) < 28) continue;
+      drawDim(ctx, a.x, a.y, b.x, b.y, fmtFeet(len3(el.a, el.b) * opts.gridFt), MUTED);
     }
   }
 }
 
 function elPoints(el) { return isFree(el) ? el.pts : [el.a, el.b]; }
-function bounds(els) {
+/** Bounds of the drawing on the page under a projection. */
+function bounds(els, proj = PLAN) {
   if (!els.length) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const el of els) for (const p of elPoints(el)) {
-    x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+    const q = proj.P(p);
+    x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y);
   }
   return { x0, y0, x1, y1 };
 }
-function fitView(els, W, H, pad = 2, maxZ = 60) {
-  const b = bounds(els);
-  if (!b) return { ox: (W % BASE_Z) / 2, oy: (H % BASE_Z) / 2, z: BASE_Z };
+function fitView(els, W, H, pad = 2, maxZ = 60, proj = PLAN) {
+  const b = bounds(els, proj);
+  if (!b) return proj.flat ? { ox: (W % BASE_Z) / 2, oy: (H % BASE_Z) / 2, z: BASE_Z } : { ox: W / 2, oy: H / 3, z: BASE_Z };
   const bw = Math.max(b.x1 - b.x0, 1) + pad * 2, bh = Math.max(b.y1 - b.y0, 1) + pad * 2;
-  const z = Math.min(W / bw, H / bh, maxZ);
-  return { z, ox: W / 2 - ((b.x0 + b.x1) / 2) * z, oy: H / 2 - ((b.y0 + b.y1) / 2) * z };
+  const z = Math.min(W / bw, (H - 150) / bh, maxZ);
+  return { z, ox: W / 2 - ((b.x0 + b.x1) / 2) * z, oy: H / 2 - 20 - ((b.y0 + b.y1) / 2) * z };
 }
 
 /* ================================================================ editor */
+const AXES = [
+  { d: [1, 0, 0], name: 'x' }, { d: [0, 1, 0], name: 'y' }, { d: [0, 0, 1], name: 'height' },
+  { d: [1, 1, 0], name: '45°' }, { d: [1, -1, 0], name: '45°' },
+];
 const Editor = {
   canvas: $('#canvas'),
   ctx: null,
   W: 0, H: 0, dpr: 1,
   project: null, sketch: null,
   view: { ox: 0, oy: 0, z: BASE_Z },
+  mode: 'plan',                 // 'plan' | 'axo'
+  proj: PLAN,
+  anim: null,
   pointers: new Map(),
   drawing: null,                // straight line in progress
   stroke: null,                 // freehand stroke in progress
@@ -300,6 +363,7 @@ const Editor = {
   spaceDown: false,
 
   get tool() { return Store.settings.tool; },
+  get isAxo() { return this.mode === 'axo'; },
 
   init() {
     this.ctx = this.canvas.getContext('2d');
@@ -316,6 +380,8 @@ const Editor = {
     document.addEventListener('gesturestart', e => e.preventDefault());
     const v = $('#view-sketch');
     v.addEventListener('click', e => {
+      const m = e.target.closest('[data-mode]');
+      if (m) return m.dataset.mode === 'axo' && this.isAxo ? this.axoMenu() : this.setMode(m.dataset.mode);
       const t = e.target.closest('[data-tool]');
       if (t) return this.setTool(t.dataset.tool);
       const a = e.target.closest('[data-act]');
@@ -332,13 +398,17 @@ const Editor = {
 
   open(project, sketch) {
     this.flush();
+    if (this.anim) { cancelAnimationFrame(this.anim); this.anim = null; }
     this.project = project; this.sketch = sketch;
+    sketch.axo = sketch.axo || { type: '45', q: 0 };
+    this.mode = sketch.mode === 'axo' ? 'axo' : 'plan';
+    this.proj = this.isAxo ? makeProj(axoParams(sketch)) : PLAN;
     this.undoStack = []; this.redoStack = [];
     this.drawing = this.stroke = this.erasing = this.gesture = this.panning = null;
     this.pointers.clear();
-    $('#sk-title').textContent = sketch.name;
     this.resize(true);
-    this.view = sketch.view && sketch.view.z ? { ...sketch.view } : fitView(sketch.lines, this.W, this.H);
+    const saved = this.isAxo ? sketch.axoView : sketch.view;
+    this.view = saved && saved.z ? { ...saved } : fitView(sketch.lines, this.W, this.H, 2, 60, this.proj);
     this.setStatus('saved');
     this.syncUI();
     this.render();
@@ -355,9 +425,75 @@ const Editor = {
     this.render();
   },
 
+  /* ---------- plan / axo ---------- */
+  setMode(mode) {
+    if (mode === this.mode || this.anim) return;
+    const s = Store.settings;
+    if (mode === 'axo') {
+      if (!s.ortho) s.ortho = true;
+      toast('Axo view: lines follow the x, y and height axes');
+    }
+    this.transition(mode, mode === 'axo' ? axoParams(this.sketch) : PLAN_PROJ, true);
+  },
+  rotateAxo() {
+    if (!this.isAxo || this.anim) return;
+    this.sketch.axo.q = ((this.sketch.axo.q || 0) + 1) % 4;
+    this.transition('axo', axoParams(this.sketch), true);
+  },
+  setAxoType(type) {
+    if (!AXO_TYPES[type]) return;
+    this.sketch.axo.type = type;
+    if (this.isAxo) this.transition('axo', axoParams(this.sketch), true);
+    else { this.setMode('axo'); }
+  },
+  /** Animate the drawing from the current projection into the target one. */
+  transition(mode, target, refit) {
+    this.saveView();
+    this.drawing = this.stroke = null;
+    const from = { r: this.proj.r, k: this.proj.k, h: this.proj.h };
+    let tr = target.r;
+    while (tr - from.r > 180) tr -= 360;
+    while (from.r - tr > 180) tr += 360;
+    const to = { r: tr, k: target.k, h: target.h };
+    this.mode = mode; this.sketch.mode = mode;
+    const toProj = makeProj(to);
+    const saved = mode === 'axo' ? null : this.sketch.view;
+    const toView = !refit || (saved && saved.z) ? (saved && saved.z ? { ...saved } : { ...this.view })
+      : fitView(this.sketch.lines, this.W, this.H, 3, 48, toProj);
+    const v0 = { ...this.view }, t0 = performance.now(), dur = 750;
+    const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const L = (a, b, e) => a + (b - a) * e;
+    this.syncUI();
+    const step = t => {
+      const e = ease(clamp((t - t0) / dur, 0, 1));
+      this.proj = makeProj({ r: L(from.r, to.r, e), k: L(from.k, to.k, e), h: L(from.h, to.h, e) });
+      this.view = { ox: L(v0.ox, toView.ox, e), oy: L(v0.oy, toView.oy, e), z: L(v0.z, toView.z, e) };
+      this.paint();
+      if (e < 1) { this.anim = requestAnimationFrame(step); return; }
+      this.anim = null;
+      this.proj = makeProj({ ...to, r: ((to.r % 360) + 360) % 360 });
+      this.view = toView;
+      this.saveView(); this.syncUI(); this.render();
+      Store.save();
+    };
+    this.anim = requestAnimationFrame(step);
+  },
+  async axoMenu() {
+    const cur = this.sketch.axo.type;
+    const v = await actionSheet('Axonometric', [
+      { label: 'Rotate view 90°', value: 'rot', hint: 'See it from the next corner (R)' },
+      ...Object.entries(AXO_TYPES).map(([k, t]) => ({ label: t.name, value: 't:' + k, hint: t.hint, sel: k === cur })),
+      { label: 'Back to plan', value: 'plan' },
+    ]);
+    if (v === 'rot') this.rotateAxo();
+    else if (v === 'plan') this.setMode('plan');
+    else if (v && v.startsWith('t:')) this.setAxoType(v.slice(2));
+  },
+
   /* ---------- coordinates + snapping ---------- */
-  toWorld(sx, sy) { return { x: (sx - this.view.ox) / this.view.z, y: (sy - this.view.oy) / this.view.z }; },
-  toScreen(p) { return { x: this.view.ox + p.x * this.view.z, y: this.view.oy + p.y * this.view.z }; },
+  toScreen(p) { const q = this.proj.P(p); return { x: this.view.ox + q.x * this.view.z, y: this.view.oy + q.y * this.view.z }; },
+  /** Screen position to a point on the horizontal plane at height z0. */
+  toPlane(sx, sy, z0 = 0) { return this.proj.inv((sx - this.view.ox) / this.view.z, (sy - this.view.oy) / this.view.z, z0); },
   local(e) { const r = this.canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; },
 
   endpoints() {
@@ -365,23 +501,31 @@ const Editor = {
     for (const el of this.sketch.lines) if (!isFree(el)) out.push(el.a, el.b);
     return out;
   },
-  nearestEndpoint(p) {
-    let best = null, bd = SNAP_PX / this.view.z;
+  /** Nearest existing line end to a screen position (within the snap radius). */
+  nearestEndpoint(pos) {
+    let best = null, bd = SNAP_PX;
     for (const q of this.endpoints()) {
-      const d = Math.hypot(q.x - p.x, q.y - p.y);
-      if (d < bd) { bd = d; best = q; }
+      const s = this.toScreen(q), d = Math.hypot(s.x - pos.x, s.y - pos.y);
+      // in plan, prefer points on the ground when stacked
+      if (d < bd - (this.isAxo || !q.z ? 0 : 0.01)) { bd = d; best = q; }
     }
     return best;
   },
-  snapPoint(p) {
-    const ep = this.nearestEndpoint(p);
-    if (ep) return { p: { x: ep.x, y: ep.y }, snapped: true };
-    if (Store.settings.snap) return { p: { x: Math.round(p.x), y: Math.round(p.y) }, snapped: false };
-    return { p, snapped: false };
+  gridRound(p) { return Store.settings.snap ? { x: Math.round(p.x), y: Math.round(p.y), z: p.z } : p; },
+  /** Where a line starts. In plan everything sits on the ground; in axo it can start on any corner. */
+  snapStart(pos) {
+    const ep = this.nearestEndpoint(pos);
+    if (ep) return { p: { x: ep.x, y: ep.y, z: this.isAxo ? (ep.z || 0) : 0 }, snapped: true };
+    return { p: this.gridRound(this.toPlane(pos.x, pos.y, 0)), snapped: false };
   },
-  /** End point for a line starting at a, given the raw pointer position p. */
-  constrain(a, p) {
-    if (!Store.settings.ortho) return this.snapPoint(p);
+  /** End point for a line starting at a, given the pointer's screen position. */
+  constrain(a, pos) {
+    if (this.isAxo) return this.constrainAxo(a, pos);
+    if (!Store.settings.ortho) {
+      const s = this.snapStart(pos);
+      return s;
+    }
+    const p = this.toPlane(pos.x, pos.y, 0);
     const dx = p.x - a.x, dy = p.y - a.y;
     const th = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
     const ux = Math.round(Math.cos(th)), uy = Math.round(Math.sin(th));   // -1, 0 or 1
@@ -397,7 +541,42 @@ const Editor = {
       if (along < best && perp < 60) { best = along; s = sq; aligned = true; snapped = perp < 0.5; }
     }
     if (!aligned && Store.settings.snap) s = Math.round(raw);
-    return { p: { x: a.x + s * ux, y: a.y + s * uy }, snapped };
+    return { p: { x: a.x + s * ux, y: a.y + s * uy, z: 0 }, snapped };
+  },
+  /** Axo drafting: lock to the nearest axo axis (x, y, height, or plan 45°) and measure along it. */
+  constrainAxo(a, pos) {
+    const s0 = Store.settings, az = a.z || 0;
+    if (!s0.ortho) {
+      const ep = this.nearestEndpoint(pos);
+      if (ep) return { p: { x: ep.x, y: ep.y, z: ep.z || 0 }, snapped: true };
+      return { p: this.gridRound(this.toPlane(pos.x, pos.y, az)), snapped: false };   // stays level with its start
+    }
+    const z = this.view.z, A = this.toScreen(a);
+    const vx = pos.x - A.x, vy = pos.y - A.y, vl = Math.hypot(vx, vy) || 1;
+    const O = this.proj.P({ x: 0, y: 0, z: 0 });
+    let best = null;
+    for (const ax of AXES) {
+      const q = this.proj.P({ x: ax.d[0], y: ax.d[1], z: ax.d[2] });
+      const dx = (q.x - O.x) * z, dy = (q.y - O.y) * z, dl = Math.hypot(dx, dy);
+      if (dl < 1e-6) continue;
+      const cos = Math.abs(vx * dx + vy * dy) / (dl * vl);
+      if (!best || cos > best.cos + 1e-9) best = { ax, dx, dy, dl, cos };
+    }
+    const { ax, dx, dy, dl } = best, d = ax.d;
+    const raw = (vx * dx + vy * dy) / (dl * dl);          // steps along d
+    const dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    let s = raw, aligned = false, snapped = false, bestA = SNAP_PX;
+    for (const q of this.endpoints()) {
+      const qz = q.z || 0;
+      const sq = ((q.x - a.x) * d[0] + (q.y - a.y) * d[1] + (qz - az) * d[2]) / dd;
+      if (Math.abs(sq) < 1e-6) continue;
+      const e = { x: a.x + sq * d[0], y: a.y + sq * d[1], z: az + sq * d[2] };
+      const Es = this.toScreen(e), Qs = this.toScreen(q);
+      const along = Math.abs(sq - raw) * dl, perp = Math.hypot(Es.x - Qs.x, Es.y - Qs.y);
+      if (along < bestA && perp < 60) { bestA = along; s = sq; aligned = true; snapped = Math.hypot(q.x - e.x, q.y - e.y, qz - e.z) < 1e-6; }
+    }
+    if (!aligned && s0.snap) s = Math.round(raw);
+    return { p: { x: a.x + s * d[0], y: a.y + s * d[1], z: az + s * d[2] }, snapped, axis: ax.name };
   },
 
   /* ---------- pointer handling ---------- */
@@ -405,6 +584,7 @@ const Editor = {
 
   onDown(e) {
     e.preventDefault();
+    if (this.anim) return;
     try { this.canvas.setPointerCapture(e.pointerId); } catch (_) { }
     if (e.pointerType === 'pen') this.sawPen = true;
     const pos = this.local(e);
@@ -414,7 +594,7 @@ const Editor = {
     // Two fingers: pinch-zoom / pan. Cancels anything in progress.
     if (this.pointers.size >= 2) {
       this.drawing = null; this.stroke = null; this.panning = null;
-      if (this.erasing) { this.cancelErase(); }
+      if (this.erasing) this.cancelErase();
       this.startGesture();
       this.render();
       return;
@@ -422,16 +602,18 @@ const Editor = {
     if (this.lockUntilAllUp) return;
     if (this.tool === 'hand' || (e.pointerType === 'touch' && this.sawPen)) return this.startPan(e.pointerId, pos);
 
-    const w = this.toWorld(pos.x, pos.y);
     const s = Store.settings;
     if (this.tool === 'erase') {
       this.erasing = { id: e.pointerId, removed: [], before: this.snapshot() };
       this.eraseAt(pos);
     } else if (this.tool === 'pencil') {
-      this.stroke = { id: e.pointerId, el: { t: 'f', pts: [w], w: s.pen, c: s.color } };
+      // In axo, a pencil stroke started on a corner is drawn on the level of that corner.
+      const ep = this.isAxo ? this.nearestEndpoint(pos) : null;
+      const z0 = ep ? (ep.z || 0) : 0;
+      this.stroke = { id: e.pointerId, z0, el: { t: 'f', pts: [this.toPlane(pos.x, pos.y, z0)], w: s.pen, c: s.color } };
     } else {
-      const sp = this.snapPoint(w);
-      this.drawing = { id: e.pointerId, a: sp.p, b: sp.p, snapA: sp.snapped, snapB: false };
+      const sp = this.snapStart(pos);
+      this.drawing = { id: e.pointerId, a: sp.p, b: sp.p, snapA: sp.snapped, snapB: false, axis: null };
     }
     this.render();
   },
@@ -450,15 +632,15 @@ const Editor = {
     if (this.stroke && this.stroke.id === e.pointerId) {
       const pts = this.stroke.el.pts, minD = 1.5 / this.view.z;
       for (const ce of (coalesced.length ? coalesced : [e])) {
-        const lp = this.local(ce), w = this.toWorld(lp.x, lp.y), last = pts[pts.length - 1];
+        const lp = this.local(ce), w = this.toPlane(lp.x, lp.y, this.stroke.z0), last = pts[pts.length - 1];
         if (Math.hypot(w.x - last.x, w.y - last.y) > minD) pts.push(w);
       }
       return this.render();
     }
     if (this.drawing && this.drawing.id === e.pointerId) {
       const last = coalesced.length ? this.local(coalesced[coalesced.length - 1]) : pos;
-      const c = this.constrain(this.drawing.a, this.toWorld(last.x, last.y));
-      this.drawing.b = c.p; this.drawing.snapB = c.snapped;
+      const c = this.constrain(this.drawing.a, last);
+      this.drawing.b = c.p; this.drawing.snapB = c.snapped; this.drawing.axis = c.axis || null;
       return this.render();
     }
     if (e.pointerType === 'mouse' && this.tool === 'erase') {
@@ -484,7 +666,7 @@ const Editor = {
       const st = this.stroke; this.stroke = null;
       if (!cancelled) {
         const before = this.snapshot();
-        st.el.pts = st.el.pts.map(p => ({ x: +p.x.toFixed(3), y: +p.y.toFixed(3) }));
+        st.el.pts = st.el.pts.map(pt);
         this.sketch.lines.push(st.el);
         this.commit(before);
       }
@@ -492,10 +674,10 @@ const Editor = {
     }
     if (this.drawing && this.drawing.id === e.pointerId) {
       const d = this.drawing; this.drawing = null;
-      const len = Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y);
-      if (!cancelled && len * this.view.z > 4) {
+      const A = this.toScreen(d.a), B = this.toScreen(d.b);
+      if (!cancelled && Math.hypot(B.x - A.x, B.y - A.y) > 4 && len3(d.a, d.b) > 1e-6) {
         const before = this.snapshot();
-        this.sketch.lines.push({ a: { ...d.a }, b: { ...d.b }, w: Store.settings.pen, c: Store.settings.color });
+        this.sketch.lines.push({ a: pt(d.a), b: pt(d.b), w: Store.settings.pen, c: Store.settings.color });
         this.commit(before);
       }
       this.render();
@@ -519,12 +701,13 @@ const Editor = {
   },
   zoomAt(z, sx, sy) {
     z = clamp(z, 4, 160);
-    const w = this.toWorld(sx, sy);
-    this.view = { z, ox: sx - w.x * z, oy: sy - w.y * z };
+    const X = (sx - this.view.ox) / this.view.z, Y = (sy - this.view.oy) / this.view.z;
+    this.view = { z, ox: sx - X * z, oy: sy - Y * z };
     this.render();
   },
   onWheel(e) {
     e.preventDefault();
+    if (this.anim) return;
     const pos = this.local(e);
     if (e.ctrlKey || e.metaKey || e.deltaMode !== 0 || (Math.abs(e.deltaY) > 40 && e.deltaX === 0)) {
       this.zoomAt(this.view.z * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0025)), pos.x, pos.y);
@@ -591,9 +774,13 @@ const Editor = {
     clearTimeout(this._saveT);
     this._saveT = setTimeout(() => this.setStatus(Store.save() ? 'saved' : 'error'), 300);
   },
+  storeView() {
+    if (!this.sketch || this.anim) return;
+    if (this.isAxo) this.sketch.axoView = { ...this.view }; else this.sketch.view = { ...this.view };
+  },
   saveView() {
     if (!this.sketch) return;
-    this.sketch.view = { ...this.view };
+    this.storeView();
     this.syncZoom();
     clearTimeout(this._viewT);
     this._viewT = setTimeout(() => Store.save(), 500);
@@ -601,7 +788,7 @@ const Editor = {
   flush() {
     if (!this.sketch) return;
     clearTimeout(this._saveT); clearTimeout(this._viewT);
-    this.sketch.view = { ...this.view };
+    this.storeView();
     this.setStatus(Store.save() ? 'saved' : 'error');
   },
 
@@ -613,7 +800,11 @@ const Editor = {
   async action(act) {
     const s = Store.settings, cx = this.W / 2, cy = this.H / 2;
     switch (act) {
-      case 'ortho': s.ortho = !s.ortho; toast(s.ortho ? 'Ortho on: horizontal, vertical and 45° only' : 'Ortho off'); break;
+      case 'ortho':
+        s.ortho = !s.ortho;
+        toast(s.ortho ? (this.isAxo ? 'Lines follow the x, y and height axes' : 'Ortho on: horizontal, vertical and 45° only')
+          : (this.isAxo ? 'Free lines stay level with their start point' : 'Ortho off'));
+        break;
       case 'snap': s.snap = !s.snap; break;
       case 'dims': s.dims = !s.dims; break;
       case 'pen': await penPicker(); if (this.tool === 'erase' || this.tool === 'hand') s.tool = 'line'; break;
@@ -621,6 +812,8 @@ const Editor = {
       case 'undo': return this.undo();
       case 'redo': return this.redo();
       case 'clear': return this.clear();
+      case 'axo-rotate': return this.rotateAxo();
+      case 'axo-menu': return this.axoMenu();
       case 'zoom-in': this.zoomAt(this.view.z * 1.25, cx, cy); return this.saveView();
       case 'zoom-out': this.zoomAt(this.view.z / 1.25, cx, cy); return this.saveView();
       case 'fit': return this.fit();
@@ -648,6 +841,8 @@ const Editor = {
     $('#toolbar [data-act="ortho"]').classList.toggle('on', s.ortho);
     $('#view-sketch [data-act="undo"]').disabled = !this.undoStack.length;
     $('#view-sketch [data-act="redo"]').disabled = !this.redoStack.length;
+    $$('#mode-seg [data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === this.mode));
+    $('#view-sketch').classList.toggle('axo', this.isAxo);
     $('#pen-swatch').style.background = INKS[s.color].hex;
     if (this.sketch) $('#grid-label').textContent = `Grid ${fmtGrid(this.sketch.gridFt)}`;
     this.syncZoom();
@@ -662,49 +857,53 @@ const Editor = {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
     const tools = { l: 'line', p: 'pencil', e: 'erase', h: 'hand' };
-    const acts = { o: 'ortho', g: 'snap', d: 'dims', f: 'fit', '+': 'zoom-in', '=': 'zoom-in', '-': 'zoom-out' };
+    const acts = { o: 'ortho', g: 'snap', d: 'dims', f: 'fit', r: 'axo-rotate', '+': 'zoom-in', '=': 'zoom-in', '-': 'zoom-out' };
     if (tools[k]) { e.preventDefault(); this.setTool(tools[k]); }
+    else if (k === 'a') { e.preventDefault(); this.setMode(this.isAxo ? 'plan' : 'axo'); }
     else if (acts[k]) { e.preventDefault(); this.action(acts[k]); }
     else if (k === 'escape') { if (this.drawing || this.stroke) { this.drawing = this.stroke = null; this.render(); } else $('#sk-back').click(); }
   },
 
   fit() {
-    this.view = fitView(this.sketch.lines, this.W, this.H, 3, 48);
+    this.view = fitView(this.sketch.lines, this.W, this.H, 3, 48, this.proj);
     this.saveView(); this.render();
   },
 
   async menu() {
     const s = Store.settings;
-    const v = await actionSheet(this.sketch.name, [
+    const items = [
       { label: 'Snap to grid', value: 'snap', check: s.snap, hint: 'Line ends land on grid dots (G)' },
-      { label: 'Show dimensions', value: 'dims', check: s.dims, hint: 'Length of every line in feet (D)' },
+      { label: 'Show dimensions', value: 'dims', check: s.dims, hint: 'True length of every line in feet (D)' },
+      { label: this.isAxo ? 'Axonometric options' : 'Axonometric view', value: 'axo', hint: this.isAxo ? 'Angle and rotation' : 'Rotate the drawing into axo (A)' },
       { label: 'Fit drawing to screen', value: 'fit' },
       { label: 'Copy sketch as text for ChatGPT', value: 'copy', hint: 'Line coordinates and lengths in feet' },
-      { label: 'Download PNG', value: 'png' },
+      { label: 'Download PNG', value: 'png', hint: this.isAxo ? 'Saves the axo view' : 'Saves the plan view' },
       { label: 'Rename sketch', value: 'rename' },
-    ]);
+    ];
+    const v = await actionSheet(this.sketch.name, items);
     if (v === 'snap' || v === 'dims' || v === 'fit') this.action(v);
+    else if (v === 'axo') this.isAxo ? this.axoMenu() : this.setMode('axo');
     else if (v === 'copy') this.copyText();
     else if (v === 'png') this.downloadPng();
     else if (v === 'rename') {
       const n = await promptText('Rename sketch', this.sketch.name);
-      if (n) { this.sketch.name = n; $('#sk-title').textContent = n; this.touch(); }
+      if (n) { this.sketch.name = n; this.touch(); }
     }
   },
 
   /* ---------- export / share ---------- */
   async renderPng() {
     try { await document.fonts.ready; } catch (_) { }
-    return exportPng(this.project, this.sketch);
+    return exportPng(this.project, this.sketch, this.isAxo ? makeProj(axoParams(this.sketch)) : PLAN);
   },
   async downloadPng() {
-    downloadBlob(await this.renderPng(), `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}.png`);
+    downloadBlob(await this.renderPng(), `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}${this.isAxo ? ' (axo)' : ''}.png`);
   },
   async copyText() { await copyOrShow(sketchText(this.project, this.sketch), 'Copied. Paste it into ChatGPT.'); },
   async share() {
     this.flush();
     const blob = await this.renderPng();
-    const name = `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}.png`;
+    const name = `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}${this.isAxo ? ' (axo)' : ''}.png`;
     const file = new File([blob], name, { type: 'image/png' });
     const text = sketchText(this.project, this.sketch);
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -717,7 +916,7 @@ const Editor = {
 
   /* ---------- render ---------- */
   render() {
-    if (this.needsRender) return;
+    if (this.needsRender || this.anim) return;
     this.needsRender = true;
     requestAnimationFrame(() => { this.needsRender = false; this.paint(); });
   },
@@ -725,7 +924,7 @@ const Editor = {
     if (!this.sketch || currentView !== 'sketch') return;
     const ctx = this.ctx, { W, H, dpr } = this, s = Store.settings;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover });
+    drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover, proj: this.proj });
     this.syncZoom();
     const pw = PEN_WEIGHTS[s.pen], ws = weightScale(this.view.z), ink = INKS[s.color].hex;
     if (this.stroke) {
@@ -741,20 +940,25 @@ const Editor = {
       ctx.globalAlpha = 1;
       const ring = (p, on) => { if (!on) return; ctx.strokeStyle = RED; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.stroke(); };
       ring(a, d.snapA); ring(b, d.snapB);
-      const len = Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y);
+      const len = len3(d.a, d.b);
       if (len > 0) {
-        let ang = Math.round(-Math.atan2(d.b.y - d.a.y, d.b.x - d.a.x) * 180 / Math.PI);
-        if (ang < 0) ang += 360;
-        drawDim(ctx, a.x, a.y, b.x, b.y, `${fmtFeet(len * this.sketch.gridFt)}   ${ang}°`, RED, 17);
+        let tag;
+        if (this.isAxo) tag = d.axis || ((d.b.z || 0) !== (d.a.z || 0) ? 'sloped' : 'level');
+        else {
+          let ang = Math.round(-Math.atan2(d.b.y - d.a.y, d.b.x - d.a.x) * 180 / Math.PI);
+          if (ang < 0) ang += 360;
+          tag = `${ang}°`;
+        }
+        drawDim(ctx, a.x, a.y, b.x, b.y, `${fmtFeet(len * this.sketch.gridFt)}   ${tag}`, RED, 17);
       }
     }
   },
 };
 
 /* ================================================================ export helpers */
-function exportPng(project, sketch) {
+function exportPng(project, sketch, proj = PLAN) {
   const els = sketch.lines, z = 40, pad = 2.5;
-  const b = bounds(els) || { x0: 0, y0: 0, x1: 16, y1: 12 };
+  const b = bounds(els, proj) || { x0: 0, y0: 0, x1: 16, y1: 12 };
   const wU = b.x1 - b.x0 + pad * 2, hU = b.y1 - b.y0 + pad * 2 + 1.5;
   const zz = z * Math.min(1, 4096 / (wU * z), 4096 / (hU * z));
   const W = Math.max(480, Math.round(wU * zz)), H = Math.max(360, Math.round(hU * zz));
@@ -762,36 +966,45 @@ function exportPng(project, sketch) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
   const view = { z: zz, ox: W / 2 - (b.x0 + b.x1) / 2 * zz, oy: (H - 1.5 * zz) / 2 - (b.y0 + b.y1) / 2 * zz };
-  drawScene(ctx, W, H, els, view, { dims: Store.settings.dims, gridFt: sketch.gridFt, weightMul: 1.15 });
+  drawScene(ctx, W, H, els, view, { dims: Store.settings.dims, gridFt: sketch.gridFt, weightMul: 1.15, proj });
   ctx.fillStyle = RED; ctx.fillRect(16, H - 40, 26, 26);
   ctx.fillStyle = '#fef9ee'; ctx.font = `15px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('Ta', 29, H - 26.5);
   ctx.textAlign = 'left'; ctx.fillStyle = MUTED; ctx.font = `14px ${SANS}`;
-  ctx.fillText(`${project.name}  ·  ${sketch.name}  ·  grid ${fmtFeet(sketch.gridFt)}`, 52, H - 26.5);
+  const viewName = proj.flat ? 'plan' : `axo ${(AXO_TYPES[sketch.axo && sketch.axo.type] || AXO_TYPES['45']).name}`;
+  ctx.fillText(`${project.name}  ·  ${sketch.name}  ·  ${viewName}  ·  grid ${fmtFeet(sketch.gridFt)}`, 52, H - 26.5);
   return new Promise(res => c.toBlob(res, 'image/png'));
 }
 
 function sketchText(project, sketch) {
-  const g = sketch.gridFt, n = v => +(v * g).toFixed(2);
+  const g = sketch.gridFt, n = v => +((v || 0) * g).toFixed(2);
   const lines = sketch.lines.filter(el => !isFree(el)), free = sketch.lines.filter(isFree);
+  const has3d = sketch.lines.some(elevated);
+  const P = p => has3d ? `(${n(p.x)}, ${n(p.y)}, ${n(p.z)})` : `(${n(p.x)}, ${n(p.y)})`;
   const out = [
     'Talago Arch sketch',
     `Project: ${project.name}`,
     `Sketch: ${sketch.name}`,
     `Grid spacing: ${fmtFeet(g)} between dots`,
-    'Coordinates in feet, origin top-left, x to the right, y downward.',
+    has3d ? 'Coordinates (x, y, z) in feet: x to the right and y downward on the plan, z = height above the plan.'
+      : 'Coordinates in feet, origin top-left, x to the right, y downward.',
     `Straight lines (${lines.length}):`,
   ];
   lines.forEach((l, i) => {
-    const len = Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y) * g;
-    let ang = Math.round(-Math.atan2(l.b.y - l.a.y, l.b.x - l.a.x) * 180 / Math.PI); if (ang < 0) ang += 360;
-    out.push(`${i + 1}. (${n(l.a.x)}, ${n(l.a.y)}) to (${n(l.b.x)}, ${n(l.b.y)}), length ${fmtFeet(len)}, angle ${ang}°${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
+    const len = len3(l.a, l.b) * g, dz = (l.b.z || 0) - (l.a.z || 0);
+    let desc;
+    if (Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y) < 1e-6) desc = 'vertical';
+    else {
+      let ang = Math.round(-Math.atan2(l.b.y - l.a.y, l.b.x - l.a.x) * 180 / Math.PI); if (ang < 0) ang += 360;
+      desc = `plan angle ${ang}°${dz ? ', sloped' : ''}`;
+    }
+    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtFeet(len)}, ${desc}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
   });
   if (free.length) {
     out.push(`Freehand pencil strokes (${free.length}):`);
     free.forEach((f, i) => {
-      const b = bounds([f]);
-      out.push(`${i + 1}. within x ${n(b.x0)} to ${n(b.x1)}, y ${n(b.y0)} to ${n(b.y1)}`);
+      const b = bounds([f]), zz = f.pts[0].z;
+      out.push(`${i + 1}. within x ${n(b.x0)} to ${n(b.x1)}, y ${n(b.y0)} to ${n(b.y1)}${zz ? `, at height ${n(zz)}` : ''}`);
     });
   }
   return out.join('\n');

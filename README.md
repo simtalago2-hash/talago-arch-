@@ -15,6 +15,12 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
   - **Pen colour and weight**.
   - **Ortho** (O): lines lock to horizontal, vertical or 45°.
   - **Grid**: spacing from 1' to 20' in ½' steps.
+- **Axonometric view**: tap **Axo** at the top (or press A) and your plan rotates and rises into an axo view.
+  - **Drafting along the axes**: with Ortho on, which axo switches on for you, a line locks to the closest axis: x, y, vertical height, or the plan 45°s. You measure along it in grid units, so a vertical line from a plan corner becomes a wall of real height, and its top corners snap so you can connect them.
+  - **Ortho off**: a line stays level with the corner it started from.
+  - **Angles**: tap **Axo** again for 45°/45° (plan oblique, the default), 30°/60°, 60°/30° or isometric. Use the rotate button (R) to view from the next corner.
+  - **Back in plan**: anything drawn above the ground shows lighter.
+  - **Measurements**: dimensions and the ChatGPT text use true 3D lengths, with heights as z.
 - **Snap** (G, in the ⋯ menu): line ends land on grid dots and existing endpoints. In ortho mode a line also stops where it lines up with an existing endpoint.
 - **Dimensions**: length and angle show live while drawing. **Show dimensions** (D) labels every line in feet and inches, based on the grid spacing. The drawing itself isn't rescaled.
 - **Undo / redo / clear** at the top. Zoom − / % / + and full screen at the bottom (tap the % to fit the drawing), plus a "Saved to notebook" status. Pinch to zoom and two fingers to pan on touch. With an Apple Pencil, one finger pans.

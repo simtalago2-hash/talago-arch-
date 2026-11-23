@@ -39,6 +39,7 @@
     <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M7 21h12M5.5 16.5l9.6-9.6a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L11 19H8z"/></symbol>
     <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6-2.4l-3.6-3.6a2 2 0 0 1 2.8-2.8L7 15"/></symbol>
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+    <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   </defs>
 </svg>
@@ -94,7 +95,13 @@
         <span class="sep"></span>
         <button type="button" class="tb" data-act="clear" aria-label="Clear sketch"><svg><use href="#i-trash"/></svg></button>
       </div>
-      <div class="sk-name" id="sk-title"></div>
+      <div class="sk-mid">
+        <div class="seg" id="mode-seg" role="group" aria-label="View">
+          <button type="button" data-mode="plan">Plan</button>
+          <button type="button" data-mode="axo">Axo</button>
+        </div>
+        <button type="button" class="tb axo-only" data-act="axo-rotate" aria-label="Rotate axo view (R)"><svg><use href="#i-rotate"/></svg></button>
+      </div>
       <div class="sk-group">
         <button type="button" class="tb" id="sk-share" aria-label="Share sketch"><svg><use href="#i-share"/></svg></button>
         <button type="button" class="tb" id="sk-menu" aria-label="More options"><svg><use href="#i-more"/></svg></button>
