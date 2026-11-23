@@ -3,6 +3,9 @@
  * Sketch coordinates are stored in grid units (1 unit = 1 dot spacing).
  */
 'use strict';
+const APP_BUILD = '__BUILD__';
+// The deploy step stamps the commit hash into APP_BUILD; an unstamped copy reports "dev".
+const appVersion = () => (/^[0-9a-f]{6,}$/i.test(APP_BUILD) ? APP_BUILD : 'dev');
 
 /* ================================================================ utils */
 const $ = (s, el = document) => el.querySelector(s);
@@ -1523,6 +1526,7 @@ $('#toc-ai').onclick = async () => {
     { label: 'Back up notebook', value: 'backup', hint: 'Save everything as a file' },
     { label: 'Restore from backup', value: 'restore' },
   ];
+  acts.push({ label: 'Check for updates', value: 'update', hint: `Version ${appVersion()}` });
   if (deferredInstall) acts.push({ label: 'Install app', value: 'install' });
   else if (!isStandalone()) acts.push({ label: 'Install on your phone', value: 'howto', hint: 'Add Talago Arch to your home screen' });
   const v = await actionSheet('Notebook', acts);
@@ -1530,6 +1534,11 @@ $('#toc-ai').onclick = async () => {
   else if (v === 'backup') backup();
   else if (v === 'restore') restore();
   else if (v === 'install') install();
+  else if (v === 'update') {
+    toast('Checking for updates…');
+    if (await checkForUpdates()) { toast('Updating…'); applyUpdate(); }
+    else toast(`You have the latest version (${appVersion()}).`);
+  }
   else if (v === 'howto') {
     const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
     Modal.open(`<h2>Install Talago Arch</h2><p>${ios ? 'In Safari, tap the Share button, then <b>Add to Home Screen</b>.' : 'In your browser menu, choose <b>Install app</b> or <b>Add to Home screen</b>.'} It then opens full screen, works offline and updates itself.</p>
@@ -1749,17 +1758,62 @@ async function install() {
   deferredInstall = null;
 }
 
+/* Updates: a new version downloads in the background (service worker).
+ * - Ready at launch (cover still up / first seconds): apply at once, nobody is mid-drawing.
+ * - Ready later: a bar stays at the top until tapped, and the update is applied
+ *   automatically the next time the app goes to the background.
+ * - Checked on every return to the app and every 30 minutes. */
+let swReg = null, updateWorker = null;
+const bootTime = Date.now();
+function applyUpdate() {
+  if (!updateWorker) return false;
+  if (currentView === 'sketch') Editor.flush();
+  if (currentView === 'schedule' && typeof Schedule !== 'undefined') Schedule.save();
+  Store.save();
+  updateWorker.postMessage('SKIP_WAITING');
+  return true;
+}
+function showUpdateBar() {
+  let bar = $('#update-bar');
+  if (!bar) {
+    bar = document.createElement('button');
+    bar.id = 'update-bar'; bar.type = 'button'; bar.className = 'update-bar';
+    bar.innerHTML = 'A new version of Talago Arch is ready <b>Update</b>';
+    bar.onclick = () => { bar.textContent = 'Updating…'; applyUpdate(); };
+    document.body.appendChild(bar);
+  }
+}
+function updateReady(w) {
+  if (!w || updateWorker === w) return;
+  updateWorker = w;
+  if ($('#cover') || Date.now() - bootTime < 8000) { applyUpdate(); return; }
+  showUpdateBar();
+}
+function checkWaiting() {
+  if (swReg && swReg.waiting && navigator.serviceWorker.controller) updateReady(swReg.waiting);
+}
+async function checkForUpdates() {
+  if (!swReg) return false;
+  try { await swReg.update(); } catch (_) { }
+  // An update may still be installing; give it a moment.
+  for (let i = 0; i < 20 && swReg.installing; i++) await new Promise(r => setTimeout(r, 250));
+  checkWaiting();
+  return !!updateWorker;
+}
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   window.addEventListener('load', async () => {
     try {
-      const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
-      const prompt = w => toast('A new version of Talago Arch is ready.', { label: 'Update', run: () => w.postMessage('SKIP_WAITING') });
-      if (reg.waiting && navigator.serviceWorker.controller) prompt(reg.waiting);
+      const reg = swReg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+      checkWaiting();
       reg.addEventListener('updatefound', () => {
         const w = reg.installing;
-        w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) prompt(w); });
+        w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) updateReady(w); });
       });
-      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => { }); });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') { if (updateWorker) applyUpdate(); }
+        else checkForUpdates();
+      });
+      setInterval(() => { if (document.visibilityState === 'visible') checkForUpdates(); }, 30 * 60 * 1000);
       let reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (reloading) return; reloading = true;
