@@ -4,7 +4,7 @@
 const BUILD = '__BUILD__';
 const CACHE = 'talago-arch-' + BUILD;
 const ASSETS = [
-  './', 'index.html', 'styles.css', 'app.js', 'dxf.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'dxf.js', 'schedule.js', 'manifest.webmanifest',
   'fonts/Inter.woff2',
   'icons/icon-192-v2.png', 'icons/icon-512-v2.png', 'icons/maskable-512-v2.png', 'icons/apple-touch-icon-v2.png', 'icons/favicon-64-v2.png'
 ];

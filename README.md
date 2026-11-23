@@ -29,6 +29,11 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
 - **Landscape**: on a phone turned sideways, the toolbar moves to a vertical strip on the right so the page stays clear.
 - **Undo / redo / clear** at the top. Zoom − / % / + and full screen at the bottom (tap the % to fit the drawing), plus a "Saved to notebook" status. Pinch to zoom and two fingers to pan on touch. With an Apple Pencil, one finger pans.
 - **Share with ChatGPT**: the Share button sends a PNG plus a text description (coordinates and lengths, unitless) to any app, including ChatGPT. The ✦ button on the Contents page copies a summary of the whole notebook.
+- **Schedules**: each project has a Schedules section alongside its sketches. **+ New schedule** creates an editable gantt in the sketchbook style.
+  - **Default**: design (SD → DD → CD with approval milestones ◆), permit (submitted ◆ → plan review → building permit issued ◆) and construction trades (site prep, foundations, framing, roofing, MEP rough-in, drywall, finishes, punch list, substantial completion ◆).
+  - **Auto-scheduling**: every task starts when everything it follows has finished (plus optional lag). Rows auto-orient by phase and start date, and hand-drawn arrows show the links.
+  - **Editing**: tap a task to edit its name, trade, phase, task or milestone, duration, what it **follows** and what it **precedes** (choices that would create a loop are disabled). Drag a bar's end to change its duration, or slide it to add lag. **+ Task** adds project-specific trades.
+  - **Views and export**: day, week and month zoom (keeps your place). Set the project start date, copy as text for ChatGPT, or export CSV.
 - **Export for Rhino (DXF)** (⋯ menu, or a sketch's ⋯ on the project page): choose what one grid unit means (inches, feet, millimetres, centimetres, metres or unitless) and the file opens in Rhino at true size.
   - **What comes across**: straight lines become line curves with true 3D heights; pencil strokes become smooth NURBS curves; hatches become real, editable hatches with their patterns and spacing.
   - **Layers and linetypes**: Ching's weights become layers (TA Major 0.50 mm, TA Secondary 0.25 mm, TA Layout 0.13 mm) and line types become linetypes (dashed, hidden, center).
@@ -67,6 +72,7 @@ python3 -m http.server 8000
 | `index.html` | App shell: cover, contents, project and sketch views |
 | `styles.css` | Look and layout (Helvetica Neue on Apple devices, bundled Inter elsewhere) |
 | `app.js` | Storage, navigation, drawing engine, export/share |
+| `schedule.js` | Project schedules: auto-scheduled gantt, task editor, CSV/text export |
 | `dxf.js` | DXF export for Rhino (curves, hatches, layers, linetypes, units) |
 | `sw.js` | Offline cache + update handling |
 | `manifest.webmanifest`, `icons/` | Home-screen install and the red "Ta" icon |

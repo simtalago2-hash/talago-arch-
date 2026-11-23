@@ -61,6 +61,7 @@ function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
 
 /* ================================================================ storage */
 const STORE_KEY = 'talago-arch-v1';
+function normProject(p) { if (!Array.isArray(p.sketches)) p.sketches = []; if (!Array.isArray(p.schedules)) p.schedules = []; return p; }
 const Store = {
   data: null,
   defaults() {
@@ -73,6 +74,7 @@ const Store = {
     if (!d || !Array.isArray(d.projects)) d = def;
     d.settings = Object.assign({}, def.settings, d.settings || {});
     if (d.settings.tool === 'erase') d.settings.tool = 'line';
+    d.projects.forEach(normProject);
     this.data = d;
   },
   save() {
@@ -81,6 +83,7 @@ const Store = {
   },
   project(id) { return this.data.projects.find(p => p.id === id); },
   sketch(p, id) { return p ? p.sketches.find(s => s.id === id) : null; },
+  schedule(p, id) { return p ? p.schedules.find(s => s.id === id) : null; },
   get settings() { return this.data.settings; },
 };
 Store.load();
@@ -1383,6 +1386,7 @@ function notebookText() {
   ps.forEach((p, i) => {
     out.push(`${pad2(i + 1)}. ${p.name} (${plural(p.sketches.length, 'sketch', 'sketches')})`);
     p.sketches.forEach(s => out.push(`    - ${s.name}: ${plural(s.lines.length, 'element', 'elements')}, grid ${fmtLen(s.gridFt)}, updated ${fmtDate(s.updated)}`));
+    p.schedules.forEach(g => out.push(`    - Schedule “${g.name}”: ${plural(g.tasks.length, 'task', 'tasks')}`));
   });
   return out.join('\n');
 }
@@ -1416,7 +1420,7 @@ function renderThumb(canvas, sketch) {
 
 /* ================================================================ views + routing */
 let currentView = null;
-const views = { toc: $('#view-toc'), project: $('#view-project'), sketch: $('#view-sketch') };
+const views = { toc: $('#view-toc'), project: $('#view-project'), sketch: $('#view-sketch'), schedule: $('#view-schedule') };
 function go(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 function show(name) {
   for (const k in views) views[k].hidden = k !== name;
@@ -1425,11 +1429,19 @@ function show(name) {
 }
 
 function route() {
-  const m = location.hash.match(/^#\/p\/([^/]+)(?:\/s\/([^/]+))?/);
+  const m = location.hash.match(/^#\/p\/([^/]+)(?:\/s\/([^/]+))?(?:\/g\/([^/]+))?/);
   if (currentView === 'sketch') Editor.flush();
   if (m) {
     const p = Store.project(m[1]);
     if (!p) return go('#/');
+    if (m[3]) {
+      const sch = Store.schedule(p, m[3]);
+      if (!sch) return go(`#/p/${p.id}`);
+      Store.data.last = { p: p.id, g: sch.id }; Store.save();
+      show('schedule');
+      Schedule.open(p, sch);
+      return;
+    }
     if (m[2]) {
       const s = Store.sketch(p, m[2]);
       if (!s) return go(`#/p/${p.id}`);
@@ -1449,6 +1461,11 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /* ---------- table of contents ---------- */
+function countsText(p) {
+  normProject(p);
+  const n = p.sketches.length, g = p.schedules.length;
+  return `${pad2(n)} ${n === 1 ? 'sketch' : 'sketches'}${g ? ` · ${g} ${g === 1 ? 'schedule' : 'schedules'}` : ''}`;
+}
 function renderToc() {
   const ps = Store.data.projects;
   $('#toc-count').textContent = plural(ps.length, 'project', 'projects');
@@ -1459,7 +1476,7 @@ function renderToc() {
         <span class="e-num">${i + 1}</span>
         <span class="e-body">
           <span class="e-name">${esc(p.name)}</span>
-          <span class="e-meta">${pad2(p.sketches.length)} ${p.sketches.length === 1 ? 'sketch' : 'sketches'} · Updated ${fmtDate(p.updated)}</span>
+          <span class="e-meta">${countsText(p)} · Updated ${fmtDate(p.updated)}</span>
           ${names ? `<span class="e-sketches">${names}</span>` : ''}
         </span>
       </button></li>`;
@@ -1495,7 +1512,7 @@ $('#project-list').addEventListener('click', e => {
 async function addProject() {
   const name = await promptText('New project', '', 'Create');
   if (!name) return;
-  const p = { id: uid(), name, created: now(), updated: now(), sketches: [] };
+  const p = { id: uid(), name, created: now(), updated: now(), sketches: [], schedules: [] };
   Store.data.projects.push(p); Store.save();
   go(`#/p/${p.id}`);
 }
@@ -1534,7 +1551,7 @@ async function projectMenu(p) {
     const ps = Store.data.projects, i = ps.indexOf(p);
     if (i > 0) { ps.splice(i, 1); ps.splice(i - 1, 0, p); Store.save(); }
   } else if (v === 'delete') {
-    if (await confirmBox(`Delete “${p.name}”?`, `This removes the project and its ${plural(p.sketches.length, 'sketch', 'sketches')} from this device. This can't be undone.`)) {
+    if (await confirmBox(`Delete “${p.name}”?`, `This removes the project, its ${plural(p.sketches.length, 'sketch', 'sketches')} and ${plural(p.schedules.length, 'schedule', 'schedules')} from this device. This can't be undone.`)) {
       Store.data.projects.splice(Store.data.projects.indexOf(p), 1); Store.save();
       if (currentView !== 'toc') return go('#/');
     }
@@ -1545,10 +1562,11 @@ async function projectMenu(p) {
 /* ---------- project ---------- */
 let currentProject = null;
 function renderProject(p) {
+  normProject(p);
   currentProject = p;
   $('#proj-num').textContent = Store.data.projects.indexOf(p) + 1;
   $('#proj-title').textContent = p.name;
-  $('#proj-lede').textContent = `${pad2(p.sketches.length)} ${p.sketches.length === 1 ? 'sketch' : 'sketches'} · Updated ${fmtDate(p.updated)}`;
+  $('#proj-lede').textContent = `${countsText(p)} · Updated ${fmtDate(p.updated)}`;
   $('#proj-count').textContent = `Project ${Store.data.projects.indexOf(p) + 1}`;
   const grid = $('#sketch-grid');
   grid.innerHTML = p.sketches.length ? p.sketches.map(s => `<div class="card">
@@ -1557,7 +1575,42 @@ function renderProject(p) {
       <button type="button" class="more" data-more="${s.id}" aria-label="Options for ${esc(s.name)}"><svg><use href="#i-more"/></svg></button>
     </div>`).join('') : `<div class="empty-note" style="padding-left:0">No sketches yet. Tap New sketch to open a fresh page.</div>`;
   requestAnimationFrame(() => $$('[data-thumb]', grid).forEach(c => renderThumb(c, Store.sketch(p, c.dataset.thumb))));
+  const sg = $('#schedule-grid');
+  sg.innerHTML = p.schedules.length ? p.schedules.map(g => {
+    const cmp = schCompute(g), vals = [...cmp.values()];
+    const span = vals.length ? `${schFmt(g, Math.min(...vals.map(r => r.s)), true)} → ${schFmt(g, Math.max(...vals.map(r => r.e)), true)}` : 'No tasks';
+    return `<div class="card">
+      <button type="button" class="open" data-open-g="${g.id}">${schThumb(g)}</button>
+      <div class="meta"><span class="nm">${esc(g.name)}</span><span class="dt">${span} · ${g.tasks.length} tasks</span></div>
+      <button type="button" class="more" data-more-g="${g.id}" aria-label="Options for ${esc(g.name)}"><svg><use href="#i-more"/></svg></button>
+    </div>`;
+  }).join('') : `<div class="empty-note" style="padding-left:0">No schedules yet. Tap New schedule for a design, permit and construction gantt.</div>`;
 }
+$('#schedule-grid').addEventListener('click', async e => {
+  const p = currentProject; if (!p) return;
+  const o = e.target.closest('[data-open-g]');
+  if (o) return go(`#/p/${p.id}/g/${o.dataset.openG}`);
+  const m = e.target.closest('[data-more-g]');
+  if (!m) return;
+  const g = Store.schedule(p, m.dataset.moreG); if (!g) return;
+  const v = await actionSheet(g.name, [
+    { label: 'Rename', value: 'rename' }, { label: 'Duplicate', value: 'dup' },
+    { label: 'Copy as text for ChatGPT', value: 'copy' }, { label: 'Delete schedule', value: 'delete', danger: true },
+  ]);
+  if (v === 'rename') { const n = await promptText('Rename schedule', g.name); if (n) { g.name = n; g.updated = now(); } }
+  else if (v === 'dup') { const c = JSON.parse(JSON.stringify(g)); c.id = uid(); c.name = g.name + ' copy'; c.created = c.updated = now(); p.schedules.splice(p.schedules.indexOf(g) + 1, 0, c); }
+  else if (v === 'copy') copyOrShow(schText(p, g), 'Copied. Paste it into ChatGPT.');
+  else if (v === 'delete') { if (await confirmBox(`Delete “${g.name}”?`, "This can't be undone.")) { p.schedules.splice(p.schedules.indexOf(g), 1); p.updated = now(); } }
+  Store.save(); renderProject(p);
+});
+$('#add-schedule').onclick = async () => {
+  const p = currentProject; if (!p) return;
+  const name = await promptText('New schedule', p.schedules.length ? `Schedule ${p.schedules.length + 1}` : 'Project schedule', 'Create');
+  if (!name) return;
+  const g = schDefault(name);
+  p.schedules.push(g); p.updated = now(); Store.save();
+  go(`#/p/${p.id}/g/${g.id}`);
+};
 $('#sketch-grid').addEventListener('click', e => {
   const p = currentProject; if (!p) return;
   const o = e.target.closest('[data-open]');
@@ -1617,6 +1670,7 @@ function restore() {
       let added = 0, replaced = 0;
       for (const p of d.projects) {
         if (!p || !p.id || !Array.isArray(p.sketches)) continue;
+        normProject(p);
         const i = Store.data.projects.findIndex(x => x.id === p.id);
         if (i >= 0) { Store.data.projects[i] = p; replaced++; } else { Store.data.projects.push(p); added++; }
       }
@@ -1700,13 +1754,14 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 /* ================================================================ boot */
 Editor.init();
-(function boot() {
+// Boot once every script (dxf.js, schedule.js) has loaded.
+document.addEventListener('DOMContentLoaded', function boot() {
   // Resume where you left off: the cover flips open onto your last page.
   if (!location.hash || location.hash === '#') {
     const l = Store.data.last, p = l && Store.project(l.p);
-    if (p) history.replaceState(null, '', l.s && Store.sketch(p, l.s) ? `#/p/${l.p}/s/${l.s}` : `#/p/${l.p}`);
+    if (p) history.replaceState(null, '', l.s && Store.sketch(p, l.s) ? `#/p/${l.p}/s/${l.s}` : l.g && Store.schedule(p, l.g) ? `#/p/${l.p}/g/${l.g}` : `#/p/${l.p}`);
     else history.replaceState(null, '', '#/');
   }
   route();
   bindCover($('#cover'), true);
-})();
+});

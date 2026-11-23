@@ -79,8 +79,36 @@
       <button id="add-sketch" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New sketch</span></button>
       <div class="dots"></div>
       <div id="sketch-grid" class="sketch-grid"></div>
+      <div class="dots"></div>
+      <button id="add-schedule" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New schedule</span></button>
+      <div class="dots"></div>
+      <div id="schedule-grid" class="sketch-grid"></div>
       <div class="dots end"></div>
       <footer class="diary-foot"><span>Talago Arch</span><span id="proj-count"></span></footer>
+    </div>
+  </section>
+
+  <!-- Schedule: editable gantt in the sketchbook style -->
+  <section id="view-schedule" class="view" hidden>
+    <header class="sch-top">
+      <button type="button" class="tb" id="sch-back" aria-label="Back to project"><svg><use href="#i-back"/></svg></button>
+      <div class="sch-titles"><div class="sch-kicker">Schedule</div><div class="sch-title" id="sch-title"></div></div>
+      <button type="button" class="sch-addbtn" id="sch-add"><svg><use href="#i-plus"/></svg> Task</button>
+      <button type="button" class="tb" id="sch-menu" aria-label="Schedule options"><svg><use href="#i-more"/></svg></button>
+    </header>
+    <div class="sch-scroll" id="sch-scroll">
+      <div class="sch-grid" id="sch-body">
+        <div class="sch-corner">Task</div>
+        <div class="sch-head" id="sch-head"></div>
+        <div class="sch-names" id="sch-names"></div>
+        <div class="sch-tl" id="sch-tl"></div>
+      </div>
+    </div>
+    <div class="sch-bottom">
+      <div class="seg" id="sch-zoom" role="group" aria-label="Scale">
+        <button type="button" data-z="day">Day</button><button type="button" data-z="week">Week</button><button type="button" data-z="month">Month</button>
+      </div>
+      <div class="sch-span" id="sch-span"></div>
     </div>
   </section>
 
@@ -177,5 +205,6 @@
 
 <script src="app.js"></script>
 <script src="dxf.js"></script>
+<script src="schedule.js"></script>
 </body>
 </html>
