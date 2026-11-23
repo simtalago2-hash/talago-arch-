@@ -21,6 +21,7 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
   - **Angles**: tap **Axo** again for 45°/45° (plan oblique, the default), 30°/60°, 60°/30° or isometric. Use the rotate button (R) to view from the next corner.
   - **Back in plan**: anything drawn above the ground shows lighter.
   - **Measurements**: dimensions and the ChatGPT text use true 3D lengths, with heights as z.
+- **Half-grid dots**: zoom in and lighter dots appear halfway between the main ones (including diagonally). While they show, line ends snap to them and lengths step in half-grid increments, e.g. 6" on a 1' grid.
 - **Snap** (G, in the ⋯ menu): line ends land on grid dots and existing endpoints. In ortho mode a line also stops where it lines up with an existing endpoint.
 - **Hand-drafted style**: every line has a slight, natural waver, like a pencil pulled by hand. It fades out at the ends so corners still meet exactly, and the stored geometry stays precise.
 - **Dimensions**: length and angle show live while drawing. **Show dimensions** (D) labels every line in feet and inches, based on the grid spacing. The drawing itself isn't rescaled.

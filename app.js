@@ -304,39 +304,58 @@ function drawFree(ctx, pts, w, color) {
 }
 
 /** Dot grid on the plan (z = 0), drawn through the current projection. */
+/** On-screen spacing (px) of one grid step under a projection. */
+function gridUnitPx(z, proj = PLAN) {
+  if (proj.flat) return z;
+  const O = proj.P({ x: 0, y: 0 }), ex = proj.P({ x: 1, y: 0 }), ey = proj.P({ x: 0, y: 1 });
+  return Math.min(Math.hypot(ex.x - O.x, ex.y - O.y), Math.hypot(ey.x - O.x, ey.y - O.y)) * z;
+}
+// Half-grid dots fade in once the main dots are this far apart on screen; snapping uses them from SUB_SNAP_PX.
+const SUB_SHOW_PX = 40, SUB_FULL_PX = 64, SUB_SNAP_PX = 44;
+/** Grid step used for snapping: 1, or 0.5 when the half-grid dots are showing. */
+function snapStepFor(z, proj = PLAN) { return gridUnitPx(z, proj) >= SUB_SNAP_PX ? 0.5 : 1; }
+const roundTo = (v, step) => Math.round(v / step) * step;
+
+/** Dot grid on the plan (z = 0), drawn through the current projection,
+ *  with lighter half-grid dots when zoomed in far enough. */
 function drawDots(ctx, view, W, H, proj = PLAN) {
   const { ox, oy, z } = view;
   if (!(z > 0) || !isFinite(z) || !isFinite(ox) || !isFinite(oy)) return;   // never loop on a bad view
+  const unit = gridUnitPx(z, proj);
+  if (!(unit > 1e-6) || !isFinite(unit)) return;
   const r = clamp(z * 0.06, 0.8, 1.6);
-  ctx.fillStyle = DOT;
-  ctx.beginPath();
+  let step = 1;
+  while (step * unit < 11) step *= 2;
+  // Visible range of grid coordinates.
+  let x0, x1, y0, y1;
   if (proj.flat) {
-    let step = 1;
-    while (step * z < 11) step *= 2;
-    const x0 = Math.floor(-ox / z / step) * step, x1 = Math.ceil((W - ox) / z / step) * step;
-    const y0 = Math.floor(-oy / z / step) * step, y1 = Math.ceil((H - oy) / z / step) * step;
-    for (let gy = y0; gy <= y1; gy += step) {
-      const sy = oy + gy * z;
-      for (let gx = x0; gx <= x1; gx += step) { const sx = ox + gx * z; ctx.moveTo(sx + r, sy); ctx.arc(sx, sy, r, 0, Math.PI * 2); }
-    }
+    x0 = -ox / z; x1 = (W - ox) / z; y0 = -oy / z; y1 = (H - oy) / z;
   } else {
-    const O = proj.P({ x: 0, y: 0 }), ex = proj.P({ x: 1, y: 0 }), ey = proj.P({ x: 0, y: 1 });
-    const unit = Math.min(Math.hypot(ex.x - O.x, ex.y - O.y), Math.hypot(ey.x - O.x, ey.y - O.y)) * z;
-    let step = 1;
-    if (!(unit > 1e-6) || !isFinite(unit)) return;
-    while (step * unit < 11) step *= 2;
     const cs = [[0, 0], [W, 0], [0, H], [W, H]].map(([sx, sy]) => proj.inv((sx - ox) / z, (sy - oy) / z, 0));
-    let x0 = Math.min(...cs.map(c => c.x)), x1 = Math.max(...cs.map(c => c.x));
-    let y0 = Math.min(...cs.map(c => c.y)), y1 = Math.max(...cs.map(c => c.y));
-    while (((x1 - x0) / step) * ((y1 - y0) / step) > 60000) step *= 2;
-    x0 = Math.floor(x0 / step) * step; y0 = Math.floor(y0 / step) * step;
-    for (let gy = y0; gy <= y1; gy += step) for (let gx = x0; gx <= x1; gx += step) {
-      const q = proj.P({ x: gx, y: gy }), sx = ox + q.x * z, sy = oy + q.y * z;
-      if (sx < -2 || sy < -2 || sx > W + 2 || sy > H + 2) continue;
-      ctx.moveTo(sx + r, sy); ctx.arc(sx, sy, r, 0, Math.PI * 2);
-    }
+    x0 = Math.min(...cs.map(c => c.x)); x1 = Math.max(...cs.map(c => c.x));
+    y0 = Math.min(...cs.map(c => c.y)); y1 = Math.max(...cs.map(c => c.y));
   }
-  ctx.fill();
+  while (((x1 - x0) / step) * ((y1 - y0) / step) > 60000) step *= 2;
+  const sub = step === 1 && unit >= SUB_SHOW_PX;
+  const fine = sub ? 0.5 : step;
+  x0 = Math.floor(x0 / fine) * fine; y0 = Math.floor(y0 / fine) * fine;
+  const main = new Path2D(), half = new Path2D(), rh = r * 0.62;
+  for (let gy = y0; gy <= y1 + 1e-9; gy += fine) for (let gx = x0; gx <= x1 + 1e-9; gx += fine) {
+    const q = proj.flat ? { x: gx, y: gy } : proj.P({ x: gx, y: gy });
+    const sx = ox + q.x * z, sy = oy + q.y * z;
+    if (sx < -2 || sy < -2 || sx > W + 2 || sy > H + 2) continue;
+    const onMain = Math.abs(gx % step) < 1e-9 && Math.abs(gy % step) < 1e-9;
+    if (onMain) { main.moveTo(sx + r, sy); main.arc(sx, sy, r, 0, Math.PI * 2); }
+    else { half.moveTo(sx + rh, sy); half.arc(sx, sy, rh, 0, Math.PI * 2); }
+  }
+  ctx.fillStyle = DOT;
+  ctx.fill(main);
+  if (sub) {
+    ctx.globalAlpha = 0.35 + 0.65 * clamp((unit - SUB_SHOW_PX) / (SUB_FULL_PX - SUB_SHOW_PX), 0, 1);
+    ctx.fillStyle = '#c9cac3';
+    ctx.fill(half);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawDim(ctx, ax, ay, bx, by, label, color, offset = 12) {
@@ -591,7 +610,8 @@ const Editor = {
     }
     return best;
   },
-  gridRound(p) { return Store.settings.snap ? { x: Math.round(p.x), y: Math.round(p.y), z: p.z } : p; },
+  snapStep() { return snapStepFor(this.view.z, this.proj); },
+  gridRound(p) { if (!Store.settings.snap) return p; const st = this.snapStep(); return { x: roundTo(p.x, st), y: roundTo(p.y, st), z: p.z }; },
   /** Where a line starts. In plan everything sits on the ground; in axo it can start on any corner. */
   snapStart(pos) {
     const ep = this.nearestEndpoint(pos);
@@ -620,7 +640,7 @@ const Editor = {
       const perp = Math.hypot(q.x - (a.x + sq * ux), q.y - (a.y + sq * uy)) * z;
       if (along < best && perp < 60) { best = along; s = sq; aligned = true; snapped = perp < 0.5; }
     }
-    if (!aligned && Store.settings.snap) s = Math.round(raw);
+    if (!aligned && Store.settings.snap) s = roundTo(raw, this.snapStep());
     return { p: { x: a.x + s * ux, y: a.y + s * uy, z: 0 }, snapped };
   },
   /** Axo drafting: lock to the nearest axo axis (x, y, height, or plan 45°) and measure along it. */
@@ -655,7 +675,7 @@ const Editor = {
       const along = Math.abs(sq - raw) * dl, perp = Math.hypot(Es.x - Qs.x, Es.y - Qs.y);
       if (along < bestA && perp < 60) { bestA = along; s = sq; aligned = true; snapped = Math.hypot(q.x - e.x, q.y - e.y, qz - e.z) < 1e-6; }
     }
-    if (!aligned && s0.snap) s = Math.round(raw);
+    if (!aligned && s0.snap) s = roundTo(raw, this.snapStep());
     return { p: { x: a.x + s * d[0], y: a.y + s * d[1], z: az + s * d[2] }, snapped, axis: ax.name };
   },
 
