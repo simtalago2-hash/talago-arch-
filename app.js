@@ -46,6 +46,8 @@ const SANS = `'Helvetica Neue', Helvetica, Inter, Arial, sans-serif`;
 
 const inkOf = el => (INKS[el.c] || INKS[0]).hex;
 const isFree = el => el.t === 'f';
+const isHatch = el => el.t === 'h';
+const isLine = el => !el.t;
 
 function fmtFeet(ft) {
   const inches = Math.round(Math.abs(ft) * 12);
@@ -61,7 +63,7 @@ const STORE_KEY = 'talago-arch-v1';
 const Store = {
   data: null,
   defaults() {
-    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', ltype: 'solid' } };
+    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', ltype: 'solid', hatch: 'x', hval: 1 } };
   },
   load() {
     let d = null;
@@ -198,7 +200,7 @@ const r3 = v => Math.round(v * 1000) / 1000;
 /** Compact stored point: z only when off the plan. */
 function pt(p) { const o = { x: r3(p.x), y: r3(p.y) }; if (p.z) o.z = r3(p.z); return o; }
 const len3 = (a, b) => Math.hypot(b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0));
-const elevated = el => isFree(el) ? el.pts.some(p => p.z) : !!(el.a.z || el.b.z);
+const elevated = el => isHatch(el) ? false : isFree(el) ? el.pts.some(p => p.z) : !!(el.a.z || el.b.z);
 
 /* ================================================================ drawing primitives */
 function weightScale(z) { return Math.sqrt(z / BASE_Z); }
@@ -288,6 +290,82 @@ function drawDashes(ctx, ax, ay, dx, dy, nx, ny, L, wEnd, wMid, off, dash) {
     for (const t of [t0, t1]) { const o = off(t); ctx.beginPath(); ctx.arc(ax + dx * t + nx * o, ay + dy * t + ny * o, hw(t), 0, Math.PI * 2); ctx.fill(); }
   }
 }
+
+/* ---------- hatching (after Ching: hatching, crosshatching, value by spacing) ---------- */
+// Angles in degrees on the page/plan (y down): -45 = ⟋, 45 = ⟍.
+const HATCH_PATTERNS = {
+  'd1': { name: 'Diagonal hatching ⟋', hint: 'One set of parallel strokes: lighter values', angles: [-45] },
+  'd2': { name: 'Diagonal hatching ⟍', hint: 'The other diagonal', angles: [45] },
+  'x': { name: 'Crosshatching', hint: 'Two perpendicular sets: middle to dark values', angles: [-45, 45] },
+  'xx': { name: 'Layered crosshatching', hint: 'Four sets: the darkest range, paper still shows', angles: [-45, 45, 0, 90] },
+};
+// Value is set by spacing (grid units). Even "dark" keeps the white of the paper.
+const HATCH_VALUES = [
+  { name: 'Light', sp: 0.42 },
+  { name: 'Medium', sp: 0.27 },
+  { name: 'Dark', sp: 0.17 },
+];
+const hatchCache = new WeakMap();
+/** Scanline a polygon into freehand hatch strokes at one angle. Returns [[p0, p1], ...] in the polygon's own space. */
+function hatchSegments(poly, angleDeg, sp, seed) {
+  const r = angleDeg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  const R = poly.map(p => ({ x: p.x * c + p.y * s, y: -p.x * s + p.y * c }));
+  let y0 = Infinity, y1 = -Infinity;
+  for (const p of R) { y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  if (!isFinite(y0) || (y1 - y0) / sp > 4000) return [];
+  const rnd = seededRand(seed), out = [];
+  for (let y = Math.ceil(y0 / sp) * sp; y <= y1; y += sp) {
+    const xs = [];
+    for (let i = 0; i < R.length; i++) {
+      const p = R[i], q = R[(i + 1) % R.length];
+      if ((p.y <= y && q.y > y) || (q.y <= y && p.y > y)) xs.push(p.x + (y - p.y) * (q.x - p.x) / (q.y - p.y));
+    }
+    xs.sort((m, n) => m - n);
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      // Freehand ends: strokes stop a little short or run a touch long, never ruled-perfect.
+      const xa = xs[i] + (rnd() - 0.55) * 0.6 * sp, xb = xs[i + 1] + (rnd() - 0.45) * 0.6 * sp;
+      if (xb - xa < sp * 0.4) continue;
+      const ya = y + (rnd() - 0.5) * 0.22 * sp, yb = y + (rnd() - 0.5) * 0.22 * sp;
+      out.push([{ x: xa * c - ya * s, y: xa * s + ya * c }, { x: xb * c - yb * s, y: xb * s + yb * c }]);
+    }
+  }
+  return out;
+}
+function cachedHatch(el, k) {
+  let entry = hatchCache.get(el);
+  if (!entry || entry.k !== k) {
+    const pat = HATCH_PATTERNS[el.pat] || HATCH_PATTERNS.d1, v = HATCH_VALUES[el.v] || HATCH_VALUES[1];
+    entry = { k, sets: pat.angles.map((ang, i) => hatchSegments(el.pts, ang, v.sp * k, (el.seed || 1) + i * 7919)) };
+    hatchCache.set(el, entry);
+  }
+  return entry.sets;
+}
+/** Draw a hatch. S maps hatch-space points to screen; unitPx = screen px per hatch-space unit. */
+function drawHatch(ctx, el, S, unitPx, ws, color) {
+  const v = HATCH_VALUES[el.v] || HATCH_VALUES[1];
+  const k = Math.max(1, Math.ceil(2.4 / (v.sp * unitPx)));     // thin out when zoomed far out
+  ctx.strokeStyle = color; ctx.lineCap = 'round';
+  ctx.lineWidth = clamp(0.7 * ws, 0.55, 1.6);
+  ctx.beginPath();
+  let n = 0;
+  for (const segs of cachedHatch(el, k)) for (const [p0, p1] of segs) {
+    const a = S(p0), b = S(p1);
+    const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+    const bow = ((((n++) * 9301 + 49297) % 233280) / 233280 - 0.5) * Math.min(1.2, L * 0.02);
+    ctx.moveTo(a.x, a.y);
+    ctx.quadraticCurveTo((a.x + b.x) / 2 - dy / L * bow, (a.y + b.y) / 2 + dx / L * bow, b.x, b.y);
+  }
+  ctx.stroke();
+}
+function pointInPoly(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > pt.y) !== (b.y > pt.y) && pt.x < (b.x - a.x) * (pt.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+const axoKey = sk => `${(sk.axo && sk.axo.type) || '45'}:${(sk.axo && sk.axo.q) || 0}`;
 
 /** Freehand pencil stroke, smoothed through midpoints. pts in screen px. */
 function drawFree(ctx, pts, w, color) {
@@ -384,7 +462,17 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
   const ws = weightScale(view.z) * (opts.weightMul || 1);
   const { ox, oy, z } = view;
   const S = p => { const q = proj.P(p); return { x: ox + q.x * z, y: oy + q.y * z }; };
+  const Spage = p => ({ x: ox + p.x * z, y: oy + p.y * z });
+  const unit = gridUnitPx(z, proj);
   for (const el of els) {
+    if (!isHatch(el)) continue;
+    if (el.view && el.view !== opts.axoKey) continue;        // axo hatches belong to their axo view
+    ctx.globalAlpha = el === opts.highlight ? 0.5 : 0.85;
+    drawHatch(ctx, el, el.view ? Spage : S, el.view ? z : unit, ws, el === opts.highlight ? RED : inkOf(el));
+    ctx.globalAlpha = 1;
+  }
+  for (const el of els) {
+    if (isHatch(el)) continue;
     const pw = PEN_WEIGHTS[el.w] || PEN_WEIGHTS[1];
     const hi = el === opts.highlight;
     const color = hi ? RED : inkOf(el);
@@ -403,7 +491,7 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
   }
   if (opts.dims && opts.gridFt) {
     for (const el of els) {
-      if (isFree(el)) continue;
+      if (!isLine(el)) continue;
       const a = S(el.a), b = S(el.b);
       if (Math.hypot(b.x - a.x, b.y - a.y) < 28) continue;
       drawDim(ctx, a.x, a.y, b.x, b.y, fmtFeet(len3(el.a, el.b) * opts.gridFt), MUTED);
@@ -411,7 +499,8 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
   }
 }
 
-function elPoints(el) { return isFree(el) ? el.pts : [el.a, el.b]; }
+// Hatches drawn in axo live in that view's page space, so they don't count toward plan/3D bounds.
+function elPoints(el) { return isHatch(el) ? (el.view ? [] : el.pts) : isFree(el) ? el.pts : [el.a, el.b]; }
 /** Bounds of the drawing on the page under a projection. */
 function bounds(els, proj = PLAN) {
   if (!els.length) return null;
@@ -503,7 +592,7 @@ const Editor = {
     this.mode = sketch.mode === 'axo' ? 'axo' : 'plan';
     this.proj = this.isAxo ? makeProj(axoParams(sketch)) : PLAN;
     this.undoStack = []; this.redoStack = [];
-    this.drawing = this.stroke = this.erasing = this.gesture = this.panning = null;
+    this.drawing = this.stroke = this.lasso = this.erasing = this.gesture = this.panning = null;
     this.pointers.clear();
     this.resize(true);
     const saved = this.isAxo ? sketch.axoView : sketch.view;
@@ -558,7 +647,7 @@ const Editor = {
     const toProj = makeProj(to);
     const saved = mode === 'axo' ? null : this.sketch.view;
     const toView = !refit || (saved && saved.z) ? (saved && saved.z ? { ...saved } : { ...this.view })
-      : fitView(this.sketch.lines, this.W, this.H, 3, 48, toProj, 150);
+      : this.axoFit(toProj);
     const v0 = { ...this.view }, t0 = performance.now(), dur = 750;
     const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     const L = (a, b, e) => a + (b - a) * e;
@@ -576,6 +665,37 @@ const Editor = {
       Store.save();
     };
     this.anim = requestAnimationFrame(step);
+  },
+  /** Fit for axo: modest zoom, drawing set low so there is headroom to raise walls. */
+  axoFit(proj) {
+    const has3d = this.sketch.lines.some(elevated);
+    const v = fitView(this.sketch.lines, this.W, this.H, 3, has3d ? 48 : BASE_Z * 1.25, proj, has3d ? 150 : 260);
+    if (!has3d) v.oy += Math.min(this.H * 0.14, 90);
+    return v;
+  },
+  async hatchMenu() {
+    const s = Store.settings;
+    const pv = (angles, sp) => `<svg class="hp" viewBox="0 0 40 28">${angles.map(ang => {
+      const out = [];
+      for (let d = -40; d <= 40; d += sp) {
+        const r = ang * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r);
+        out.push(`<line x1="${20 + d * -sn - 30 * c}" y1="${14 + d * c - 30 * sn}" x2="${20 + d * -sn + 30 * c}" y2="${14 + d * c + 30 * sn}"/>`);
+      }
+      return out.join('');
+    }).join('')}</svg>`;
+    await Modal.open(`<h2>Hatching</h2>
+      <p>Draw a loop around an area and it fills with hatching. Spacing sets the value.</p>
+      <div class="label">Pattern</div>
+      <div class="sheet-list pick">${Object.entries(HATCH_PATTERNS).map(([k, h]) => `<button type="button" data-hp="${k}" class="${k === s.hatch ? 'on' : ''}"><span>${h.name}<small>${h.hint}</small></span>${pv(h.angles, 5)}</button>`).join('')}</div>
+      <div class="label">Value</div>
+      <div class="opts">${HATCH_VALUES.map((v, i) => `<button type="button" data-hv="${i}" class="${i === s.hval ? 'on' : ''}">${v.name}</button>`).join('')}</div>
+      <div class="btns" style="margin-top:20px"><button type="button" class="btn primary" data-x>Done</button></div>`,
+      (c, done) => {
+        $('[data-x]', c).onclick = () => done(true);
+        $$('[data-hp]', c).forEach(b => b.onclick = () => { s.hatch = b.dataset.hp; $$('[data-hp]', c).forEach(x => x.classList.toggle('on', x === b)); });
+        $$('[data-hv]', c).forEach(b => b.onclick = () => { s.hval = +b.dataset.hv; $$('[data-hv]', c).forEach(x => x.classList.toggle('on', x === b)); });
+      });
+    Store.save();
   },
   async axoMenu() {
     const cur = this.sketch.axo.type;
@@ -595,9 +715,24 @@ const Editor = {
   toPlane(sx, sy, z0 = 0) { return this.proj.inv((sx - this.view.ox) / this.view.z, (sy - this.view.oy) / this.view.z, z0); },
   local(e) { const r = this.canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; },
 
+  /** Hatch space: plan coordinates in plan view, page coordinates in axo. */
+  toHatch(sx, sy) {
+    if (this.isAxo) return { x: (sx - this.view.ox) / this.view.z, y: (sy - this.view.oy) / this.view.z };
+    const w = this.toPlane(sx, sy, 0); return { x: w.x, y: w.y };
+  },
+  hatchToScreen(el) {
+    if (el.view) return p => ({ x: this.view.ox + p.x * this.view.z, y: this.view.oy + p.y * this.view.z });
+    return p => this.toScreen(p);
+  },
+  /** Lasso point, snapped to a nearby corner so hatching fills right up to the lines. */
+  lassoPoint(pos) {
+    const ep = this.nearestEndpoint(pos);
+    const s = ep ? this.toScreen(this.isAxo ? ep : { x: ep.x, y: ep.y }) : pos;
+    return this.toHatch(s.x, s.y);
+  },
   endpoints() {
     const out = [];
-    for (const el of this.sketch.lines) if (!isFree(el)) out.push(el.a, el.b);
+    for (const el of this.sketch.lines) if (isLine(el)) out.push(el.a, el.b);
     return out;
   },
   /** Nearest existing line end to a screen position (within the snap radius). */
@@ -693,7 +828,7 @@ const Editor = {
     if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || this.spaceDown)) return this.startPan(e.pointerId, pos);
     // Two fingers: pinch-zoom / pan. Cancels anything in progress.
     if (this.pointers.size >= 2) {
-      this.drawing = null; this.stroke = null; this.panning = null;
+      this.drawing = null; this.stroke = null; this.lasso = null; this.panning = null;
       if (this.erasing) this.cancelErase();
       this.startGesture();
       this.render();
@@ -706,6 +841,8 @@ const Editor = {
     if (this.tool === 'erase') {
       this.erasing = { id: e.pointerId, removed: [], before: this.snapshot() };
       this.eraseAt(pos);
+    } else if (this.tool === 'hatch') {
+      this.lasso = { id: e.pointerId, pts: [this.lassoPoint(pos)] };
     } else if (this.tool === 'pencil') {
       // In axo, a pencil stroke started on a corner is drawn on the level of that corner.
       const ep = this.isAxo ? this.nearestEndpoint(pos) : null;
@@ -729,6 +866,14 @@ const Editor = {
     }
     if (this.erasing && this.erasing.id === e.pointerId) return this.eraseAt(pos);
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    if (this.lasso && this.lasso.id === e.pointerId) {
+      const pts = this.lasso.pts, minD = 4 / this.view.z;
+      for (const ce of (coalesced.length ? coalesced : [e])) {
+        const lp = this.local(ce), w = this.lassoPoint(lp), last = pts[pts.length - 1];
+        if (Math.hypot(w.x - last.x, w.y - last.y) > minD) pts.push(w);
+      }
+      return this.render();
+    }
     if (this.stroke && this.stroke.id === e.pointerId) {
       const pts = this.stroke.el.pts, minD = 1.5 / this.view.z;
       for (const ce of (coalesced.length ? coalesced : [e])) {
@@ -761,6 +906,23 @@ const Editor = {
     if (this.erasing && this.erasing.id === e.pointerId) {
       if (this.erasing.removed.length) this.commit(this.erasing.before);
       this.erasing = null; this.render(); return;
+    }
+    if (this.lasso && this.lasso.id === e.pointerId) {
+      const ls = this.lasso; this.lasso = null;
+      if (!cancelled && ls.pts.length >= 3) {
+        const sc = this.hatchToScreen({ view: this.isAxo })
+        const scr = ls.pts.map(sc);
+        let area = 0;
+        for (let i = 0; i < scr.length; i++) { const p = scr[i], q = scr[(i + 1) % scr.length]; area += p.x * q.y - q.x * p.y; }
+        if (Math.abs(area) / 2 > 150) {
+          const s = Store.settings, before = this.snapshot();
+          const el = { t: 'h', pts: ls.pts.map(p => ({ x: r3(p.x), y: r3(p.y) })), pat: s.hatch, v: s.hval, c: s.color, seed: Math.floor(Math.random() * 1e9) };
+          if (this.isAxo) el.view = axoKey(this.sketch);
+          this.sketch.lines.push(el);
+          this.commit(before);
+        } else toast('Draw a loop around the area to hatch');
+      }
+      this.render(); return;
     }
     if (this.stroke && this.stroke.id === e.pointerId) {
       const st = this.stroke; this.stroke = null;
@@ -828,13 +990,22 @@ const Editor = {
       return Math.hypot(pos.x - (a.x + dx * t), pos.y - (a.y + dy * t));
     };
     for (const el of this.sketch.lines) {
+      if (isHatch(el)) continue;
       const pts = elPoints(el).map(p => this.toScreen(p));
       for (let i = 0; i < Math.max(1, pts.length - 1); i++) {
         const d = segDist(pts[i], pts[i + 1] || pts[i]);
         if (d < bd) { bd = d; best = el; }
       }
     }
-    return best;
+    if (best) return best;
+    // No line under the finger: a tap inside a hatched area erases that hatch (topmost first).
+    const key = this.isAxo ? axoKey(this.sketch) : null;
+    for (let i = this.sketch.lines.length - 1; i >= 0; i--) {
+      const el = this.sketch.lines[i];
+      if (!isHatch(el) || (el.view || null) !== key) continue;
+      if (pointInPoly(pos, el.pts.map(this.hatchToScreen(el)))) return el;
+    }
+    return null;
   },
   eraseAt(pos) {
     const el = this.hitTest(pos);
@@ -896,6 +1067,8 @@ const Editor = {
 
   /* ---------- toolbar ---------- */
   setTool(t) {
+    if (t === 'hatch' && Store.settings.tool === 'hatch') return this.hatchMenu();
+    if (t === 'hatch') toast('Draw a loop around an area to hatch it. Tap Hatch again for pattern and value.');
     Store.settings.tool = t; this.hover = null;
     Store.save(); this.syncUI(); this.render();
   },
@@ -958,7 +1131,7 @@ const Editor = {
     if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); return this.redo(); }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
-    const tools = { l: 'line', p: 'pencil', e: 'erase', h: 'hand' };
+    const tools = { l: 'line', p: 'pencil', t: 'hatch', e: 'erase', h: 'hand' };
     const acts = { o: 'ortho', g: 'snap', d: 'dims', f: 'fit', r: 'axo-rotate', '+': 'zoom-in', '=': 'zoom-in', '-': 'zoom-out' };
     if (tools[k]) { e.preventDefault(); this.setTool(tools[k]); }
     else if (k === 'a') { e.preventDefault(); this.setMode(this.isAxo ? 'plan' : 'axo'); }
@@ -1027,9 +1200,18 @@ const Editor = {
     if (!this.sketch || currentView !== 'sketch') return;
     const ctx = this.ctx, { W, H, dpr } = this, s = Store.settings;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover, proj: this.proj });
+    drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover, proj: this.proj, axoKey: this.isAxo && !this.anim ? axoKey(this.sketch) : null });
     this.syncZoom();
     const pw = PEN_WEIGHTS[s.pen], ws = weightScale(this.view.z), ink = INKS[s.color].hex;
+    if (this.lasso && this.lasso.pts.length > 1) {
+      const sc = this.hatchToScreen({ view: this.isAxo });
+      const pts = this.lasso.pts.map(sc);
+      ctx.save();
+      ctx.strokeStyle = RED; ctx.lineWidth = 1.2; ctx.setLineDash([4, 4]);
+      ctx.fillStyle = 'rgba(175,49,41,.06)';
+      ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
+      ctx.fill(); ctx.stroke(); ctx.restore();
+    }
     if (this.stroke) {
       ctx.globalAlpha = 0.92 * (pw.alpha || 1);
       drawFree(ctx, this.stroke.el.pts.map(p => this.toScreen(p)), pw.free * ws, ink);
@@ -1071,7 +1253,7 @@ function exportPng(project, sketch, proj = PLAN) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
   const view = { z: zz, ox: W / 2 - (b.x0 + b.x1) / 2 * zz, oy: (H - 1.5 * zz) / 2 - (b.y0 + b.y1) / 2 * zz };
-  drawScene(ctx, W, H, els, view, { dims: Store.settings.dims, gridFt: sketch.gridFt, weightMul: 1.15, proj });
+  drawScene(ctx, W, H, els, view, { dims: Store.settings.dims, gridFt: sketch.gridFt, weightMul: 1.15, proj, axoKey: proj.flat ? null : axoKey(sketch) });
   ctx.fillStyle = RED; ctx.fillRect(16, H - 40, 26, 26);
   ctx.fillStyle = '#fef9ee'; ctx.font = `15px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('Ta', 29, H - 26.5);
@@ -1083,7 +1265,7 @@ function exportPng(project, sketch, proj = PLAN) {
 
 function sketchText(project, sketch) {
   const g = sketch.gridFt, n = v => +((v || 0) * g).toFixed(2);
-  const lines = sketch.lines.filter(el => !isFree(el)), free = sketch.lines.filter(isFree);
+  const lines = sketch.lines.filter(isLine), free = sketch.lines.filter(isFree), hatches = sketch.lines.filter(isHatch);
   const has3d = sketch.lines.some(elevated);
   const P = p => has3d ? `(${n(p.x)}, ${n(p.y)}, ${n(p.z)})` : `(${n(p.x)}, ${n(p.y)})`;
   const out = [
@@ -1107,6 +1289,15 @@ function sketchText(project, sketch) {
     const wt = (PEN_WEIGHTS[l.w] || PEN_WEIGHTS[1]).full.toLowerCase(), ty = LINE_TYPES[typeOf(l)].name.toLowerCase();
     out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtFeet(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
   });
+  if (hatches.length) {
+    out.push(`Hatched areas (${hatches.length}):`);
+    hatches.forEach((h, i) => {
+      const pat = (HATCH_PATTERNS[h.pat] || HATCH_PATTERNS.d1).name.replace(/ [⟋⟍]/, '').toLowerCase();
+      const val = (HATCH_VALUES[h.v] || HATCH_VALUES[1]).name.toLowerCase();
+      if (h.view) out.push(`${i + 1}. ${pat}, ${val} value, drawn on the axo view`);
+      else { const b = bounds([h]); out.push(`${i + 1}. ${pat}, ${val} value, within x ${n(b.x0)} to ${n(b.x1)}, y ${n(b.y0)} to ${n(b.y1)}`); }
+    });
+  }
   if (free.length) {
     out.push(`Freehand pencil strokes (${free.length}):`);
     free.forEach((f, i) => {

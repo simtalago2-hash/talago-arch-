@@ -12,6 +12,7 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
   - **Pencil** (P): freehand strokes.
   - **Eraser** (E).
   - **Hand** (H): pan.
+  - **Hatch** (T): draw a loop around an area to tone it, after Ching. Tap Hatch again to choose diagonal hatching (either direction), crosshatching or layered crosshatching, and a light, medium or dark value (set by stroke spacing). Strokes are freehand, not ruled. Hatching drawn in plan stays on the plan; hatching drawn in axo stays with that axo view. Tap inside a hatch with the eraser to remove it.
   - **Pen**: ink colour, Ching line weights (major/primary for cuts and profiles, secondary for elevations and corners, grid/layout for construction) and line types (solid, dashed above cut, dashed below cut, centerline).
   - **Ortho** (O): lines lock to horizontal, vertical or 45°.
   - **Grid**: spacing from 1' to 20' in ½' steps.
@@ -25,6 +26,7 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
 - **Snap** (G, in the ⋯ menu): line ends land on grid dots and existing endpoints. In ortho mode a line also stops where it lines up with an existing endpoint.
 - **Hand-drafted style**: every line has a slight, natural waver, like a pencil pulled by hand. It fades out at the ends so corners still meet exactly, and the stored geometry stays precise.
 - **Dimensions**: length and angle show live while drawing. **Show dimensions** (D) labels every line in feet and inches, based on the grid spacing. The drawing itself isn't rescaled.
+- **Landscape**: on a phone turned sideways, the toolbar moves to a vertical strip on the right so the page stays clear.
 - **Undo / redo / clear** at the top. Zoom − / % / + and full screen at the bottom (tap the % to fit the drawing), plus a "Saved to notebook" status. Pinch to zoom and two fingers to pan on touch. With an Apple Pencil, one finger pans.
 - **Share with ChatGPT**: the Share button sends a PNG plus a text description (coordinates and lengths in feet) to any app, including ChatGPT. The ✦ button on the Contents page copies a summary of the whole notebook.
 - **Back up / restore** the notebook as a file (✦ menu).
