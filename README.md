@@ -12,7 +12,7 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
   - **Pencil** (P): freehand strokes.
   - **Eraser** (E).
   - **Hand** (H): pan.
-  - **Hatch** (T): draw a loop around an area to tone it, after Ching. Tap Hatch again to choose diagonal hatching (either direction), crosshatching or layered crosshatching, and a light, medium or dark value (set by stroke spacing). Strokes are freehand, not ruled. Hatching drawn in plan stays on the plan; hatching drawn in axo stays with that axo view. Tap inside a hatch with the eraser to remove it.
+  - **Hatch** (T): draw a loop around an area to tone it, after Ching. Tap Hatch again to choose diagonal hatching (either direction), crosshatching or layered crosshatching, and a light, medium or dark value (set by stroke spacing). Strokes are freehand, not ruled, each with a pen hit at both ends. With Snap on, the loop is straightened and its corners land on grid dots (or half-grid dots when zoomed in) and existing line ends. Hatching drawn in plan stays on the plan; hatching drawn in axo stays with that axo view. Tap inside a hatch with the eraser to remove it.
   - **Pen**: ink colour, Ching line weights (major/primary for cuts and profiles, secondary for elevations and corners, grid/layout for construction) and line types (solid, dashed above cut, dashed below cut, centerline).
   - **Ortho** (O): lines lock to horizontal, vertical or 45°.
   - **Grid**: spacing from 1' to 20' in ½' steps.
