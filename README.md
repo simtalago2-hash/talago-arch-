@@ -12,7 +12,7 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
   - **Pencil** (P): freehand strokes.
   - **Eraser** (E).
   - **Hand** (H): pan.
-  - **Pen colour and weight**.
+  - **Pen**: ink colour, Ching line weights (major/primary for cuts and profiles, secondary for elevations and corners, grid/layout for construction) and line types (solid, dashed above cut, dashed below cut, centerline).
   - **Ortho** (O): lines lock to horizontal, vertical or 45°.
   - **Grid**: spacing from 1' to 20' in ½' steps.
 - **Axonometric view**: tap **Axo** at the top (or press A) and your plan rotates and rises into an axo view.

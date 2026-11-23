@@ -16,11 +16,20 @@ const pad2 = n => String(n).padStart(2, '0');
 const GRID_OPTIONS = []; // 1' to 20' in 1/2' increments
 for (let v = 1; v <= 20; v += 0.5) GRID_OPTIONS.push(v);
 
+// Line weights after Ching: index 0 = grid/layout, 1 = secondary, 2 = major/primary.
 const PEN_WEIGHTS = [
-  { name: 'Fine', end: 2.8, mid: 0.9, free: 1.1 },
-  { name: 'Medium', end: 4.2, mid: 1.35, free: 1.7 },
-  { name: 'Bold', end: 6.0, mid: 2.0, free: 2.6 },
+  { name: 'Layout', full: 'Grid / layout', hint: 'Construction, layout, lines on planes, textures', lead: 'F/H · 2H · 4H', end: 1.5, mid: 0.65, free: 0.9, alpha: 0.55 },
+  { name: 'Secondary', full: 'Secondary', hint: 'Elevations, corners, intersections of planes', lead: 'HB · F/H', end: 3.6, mid: 1.25, free: 1.6, alpha: 1 },
+  { name: 'Major', full: 'Major / primary', hint: 'Cuts, profiles, slices through spaces', lead: 'HB · F/H', end: 6.0, mid: 2.2, free: 2.6, alpha: 1 },
 ];
+// Line types after Ching. Dash patterns in px at 100% (on, off, on, off…), always starting and ending on a dash.
+const LINE_TYPES = {
+  solid: { name: 'Solid', hint: 'Cut, profile and elevation lines', dash: null },
+  above: { name: 'Dashed: above cut', hint: 'Overhead elements, longer dashes', dash: [15, 5.5] },
+  below: { name: 'Dashed: below cut', hint: 'Hidden elements, short tight dashes', dash: [7, 4.5] },
+  center: { name: 'Centerline', hint: 'Long–short–long, long dashes about equal', dash: [30, 5, 5, 5] },
+};
+const typeOf = el => LINE_TYPES[el.k] ? el.k : 'solid';
 const INKS = [
   { name: 'Ink', hex: '#2c2e29' },
   { name: 'Red', hex: '#af3129' },
@@ -52,7 +61,7 @@ const STORE_KEY = 'talago-arch-v1';
 const Store = {
   data: null,
   defaults() {
-    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', wiggle: true } };
+    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', wiggle: true, ltype: 'solid' } };
   },
   load() {
     let d = null;
@@ -146,13 +155,16 @@ function penPicker() {
   return Modal.open(`<h2>Pen</h2>
     <div class="label">Ink</div>
     <div class="colors">${INKS.map((k, i) => `<button type="button" data-c="${i}" class="${i === s.color ? 'on' : ''}" style="background:${k.hex}" aria-label="${k.name}"></button>`).join('')}</div>
-    <div class="label">Weight</div>
-    <div class="opts weights">${PEN_WEIGHTS.map((w, i) => `<button type="button" data-w="${i}" class="${i === s.pen ? 'on' : ''}"><i style="height:${[1.5, 2.5, 4][i]}px"></i>${w.name}</button>`).join('')}</div>
+    <div class="label">Line weight</div>
+    <div class="sheet-list pick">${[2, 1, 0].map(i => { const w = PEN_WEIGHTS[i]; return `<button type="button" data-w="${i}" class="${i === s.pen ? 'on' : ''}"><span>${w.full}<small>${w.hint}</small></span><svg class="lt" viewBox="0 0 64 12"><path d="M3 6h58" style="stroke-width:${[1, 1.8, 3.2][i]};opacity:${w.alpha}"/></svg></button>`; }).join('')}</div>
+    <div class="label">Line type</div>
+    <div class="sheet-list pick">${Object.entries(LINE_TYPES).map(([k, t]) => `<button type="button" data-k="${k}" class="${k === s.ltype ? 'on' : ''}"><span>${t.name}<small>${t.hint}</small></span><svg class="lt" viewBox="0 0 64 12"><path d="M3 6h58" style="stroke-dasharray:${t.dash ? t.dash.map(v => v * 0.55).join(' ') : 'none'}"/></svg></button>`).join('')}</div>
     <div class="btns" style="margin-top:20px"><button type="button" class="btn primary" data-x>Done</button></div>`,
     (c, done) => {
       $('[data-x]', c).onclick = () => done(true);
       $$('[data-c]', c).forEach(b => b.onclick = () => { s.color = +b.dataset.c; $$('[data-c]', c).forEach(x => x.classList.toggle('on', x === b)); });
       $$('[data-w]', c).forEach(b => b.onclick = () => { s.pen = +b.dataset.w; $$('[data-w]', c).forEach(x => x.classList.toggle('on', x === b)); });
+      $$('[data-k]', c).forEach(b => b.onclick = () => { s.ltype = b.dataset.k; $$('[data-k]', c).forEach(x => x.classList.toggle('on', x === b)); });
     });
 }
 
@@ -206,7 +218,7 @@ function lineSeed(a, b) {
 /** Straight line, heavier at both ends (the architect's "hit" at start and finish).
  *  With a seed, it gets a slight hand-drawn wiggle that fades out at both ends,
  *  so corners still meet exactly. */
-function drawTaper(ctx, ax, ay, bx, by, wEnd, wMid, color, seed) {
+function drawTaper(ctx, ax, ay, bx, by, wEnd, wMid, color, seed, dash) {
   const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy);
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -227,6 +239,7 @@ function drawTaper(ctx, ax, ay, bx, by, wEnd, wMid, color, seed) {
       return env * (bow + a1 * Math.sin(6.283 * f1 * t + p1) + a2 * Math.sin(6.283 * f2 * t + p2));
     };
   }
+  if (dash && L > dash[0] * 1.6) return drawDashes(ctx, ax, ay, dx, dy, nx, ny, L, wEnd, wMid, off, dash);
   const N = clamp(Math.ceil(L / 3), 10, 200);
   const ts = [];
   for (let i = 0; i <= N; i++) ts.push(0.5 - 0.5 * Math.cos(Math.PI * i / N)); // denser near the ends
@@ -242,6 +255,38 @@ function drawTaper(ctx, ax, ay, bx, by, wEnd, wMid, color, seed) {
   ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.arc(ax, ay, wEnd / 2, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.arc(bx, by, wEnd / 2, 0, Math.PI * 2); ctx.fill();
+}
+
+/** Split a line of length L into dashes [t0, t1] that start and end on a full dash. */
+function dashSegments(L, pat) {
+  const cycle = pat.reduce((s, v) => s + v, 0), first = pat[0];
+  const n = Math.max(1, Math.round((L - first) / cycle));
+  const k = L / (n * cycle + first);                 // stretch the pattern to fit exactly
+  const segs = [];
+  let d = 0, i = 0;
+  while (d < L - 1e-6) {
+    const len = pat[i % pat.length] * k;
+    if (i % 2 === 0) segs.push([d / L, Math.min(d + len, L) / L]);
+    d += len; i++;
+  }
+  return segs;
+}
+/** Dashed / centerline rendering along the same wiggled path, each dash with a light hit at its ends. */
+function drawDashes(ctx, ax, ay, dx, dy, nx, ny, L, wEnd, wMid, off, dash) {
+  const base = wMid * 1.2, hit = Math.min(wEnd * 0.6, wMid * 1.6);
+  for (let [t0, t1] of dashSegments(L, dash)) {
+    // Pull each dash end in by its cap radius so the gaps stay open and crisp.
+    const inset = (hit / 2) / L, mid = (t0 + t1) / 2;
+    t0 = Math.min(t0 + inset, mid); t1 = Math.max(t1 - inset, mid);
+    const len = (t1 - t0) * L, M = clamp(Math.ceil(len / 2), 3, 40);
+    const hw = t => { const dd = Math.min(t - t0, t1 - t) * L; return (base + (hit - base) * Math.exp(-dd / 2.5)) / 2; };
+    const P = (t, sgn) => { const o = off(t), h = hw(t) * sgn; return [ax + dx * t + nx * (o + h), ay + dy * t + ny * (o + h)]; };
+    ctx.beginPath();
+    for (let j = 0; j <= M; j++) { const [x, y] = P(t0 + (t1 - t0) * j / M, 1); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    for (let j = M; j >= 0; j--) { const [x, y] = P(t0 + (t1 - t0) * j / M, -1); ctx.lineTo(x, y); }
+    ctx.closePath(); ctx.fill();
+    for (const t of [t0, t1]) { const o = off(t); ctx.beginPath(); ctx.arc(ax + dx * t + nx * o, ay + dy * t + ny * o, hw(t), 0, Math.PI * 2); ctx.fill(); }
+  }
 }
 
 /** Freehand pencil stroke, smoothed through midpoints. pts in screen px. */
@@ -325,14 +370,15 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
     const hi = el === opts.highlight;
     const color = hi ? RED : inkOf(el);
     // In plan, anything drawn above the ground plane is shown lighter.
-    const fade = proj.flat && elevated(el) ? 0.35 : 1;
+    const fade = (proj.flat && elevated(el) ? 0.35 : 1) * (pw.alpha || 1);
     if (isFree(el)) {
       ctx.globalAlpha = (hi ? 0.6 : 0.92) * fade;
       drawFree(ctx, el.pts.map(S), pw.free * ws, color);
     } else {
       ctx.globalAlpha = (hi ? 0.6 : 1) * fade;
       const a = S(el.a), b = S(el.b);
-      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, color, opts.wiggle === false ? null : lineSeed(el.a, el.b));
+      const dash = LINE_TYPES[typeOf(el)].dash;
+      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, color, opts.wiggle === false ? null : lineSeed(el.a, el.b), dash && dash.map(v => v * ws));
     }
     ctx.globalAlpha = 1;
   }
@@ -711,7 +757,9 @@ const Editor = {
       const A = this.toScreen(d.a), B = this.toScreen(d.b);
       if (!cancelled && Math.hypot(B.x - A.x, B.y - A.y) > 4 && len3(d.a, d.b) > 1e-6) {
         const before = this.snapshot();
-        this.sketch.lines.push({ a: pt(d.a), b: pt(d.b), w: Store.settings.pen, c: Store.settings.color });
+        const ln = { a: pt(d.a), b: pt(d.b), w: Store.settings.pen, c: Store.settings.color };
+        if (Store.settings.ltype && Store.settings.ltype !== 'solid') ln.k = Store.settings.ltype;
+        this.sketch.lines.push(ln);
         this.commit(before);
       }
       this.render();
@@ -965,15 +1013,16 @@ const Editor = {
     this.syncZoom();
     const pw = PEN_WEIGHTS[s.pen], ws = weightScale(this.view.z), ink = INKS[s.color].hex;
     if (this.stroke) {
-      ctx.globalAlpha = 0.92;
+      ctx.globalAlpha = 0.92 * (pw.alpha || 1);
       drawFree(ctx, this.stroke.el.pts.map(p => this.toScreen(p)), pw.free * ws, ink);
       ctx.globalAlpha = 1;
     }
     const d = this.drawing;
     if (d) {
       const a = this.toScreen(d.a), b = this.toScreen(d.b);
-      ctx.globalAlpha = 0.85;
-      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, ink, s.wiggle ? lineSeed(d.a, d.b) : null);
+      ctx.globalAlpha = 0.85 * (pw.alpha || 1);
+      const dash = LINE_TYPES[s.ltype] && LINE_TYPES[s.ltype].dash;
+      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, ink, s.wiggle ? lineSeed(d.a, d.b) : null, dash && dash.map(v => v * ws));
       ctx.globalAlpha = 1;
       const ring = (p, on) => { if (!on) return; ctx.strokeStyle = RED; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.stroke(); };
       ring(a, d.snapA); ring(b, d.snapB);
@@ -1026,6 +1075,7 @@ function sketchText(project, sketch) {
     `Grid spacing: ${fmtFeet(g)} between dots`,
     has3d ? 'Coordinates (x, y, z) in feet: x to the right and y downward on the plan, z = height above the plan.'
       : 'Coordinates in feet, origin top-left, x to the right, y downward.',
+    'Line weights and types follow Ching: major/primary = cuts and profiles, secondary = elevations and corners, grid/layout = construction; dashed above cut = overhead, dashed below cut = hidden.',
     `Straight lines (${lines.length}):`,
   ];
   lines.forEach((l, i) => {
@@ -1036,7 +1086,8 @@ function sketchText(project, sketch) {
       let ang = Math.round(-Math.atan2(l.b.y - l.a.y, l.b.x - l.a.x) * 180 / Math.PI); if (ang < 0) ang += 360;
       desc = `plan angle ${ang}°${dz ? ', sloped' : ''}`;
     }
-    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtFeet(len)}, ${desc}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
+    const wt = (PEN_WEIGHTS[l.w] || PEN_WEIGHTS[1]).full.toLowerCase(), ty = LINE_TYPES[typeOf(l)].name.toLowerCase();
+    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtFeet(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
   });
   if (free.length) {
     out.push(`Freehand pencil strokes (${free.length}):`);
