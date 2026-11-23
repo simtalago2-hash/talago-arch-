@@ -16,11 +16,20 @@ const pad2 = n => String(n).padStart(2, '0');
 const GRID_OPTIONS = []; // 1' to 20' in 1/2' increments
 for (let v = 1; v <= 20; v += 0.5) GRID_OPTIONS.push(v);
 
+// Line weights after Ching: index 0 = grid/layout, 1 = secondary, 2 = major/primary.
 const PEN_WEIGHTS = [
-  { name: 'Fine', end: 2.8, mid: 0.9, free: 1.1 },
-  { name: 'Medium', end: 4.2, mid: 1.35, free: 1.7 },
-  { name: 'Bold', end: 6.0, mid: 2.0, free: 2.6 },
+  { name: 'Layout', full: 'Grid / layout', hint: 'Construction, layout, lines on planes, textures', lead: 'F/H · 2H · 4H', end: 1.5, mid: 0.65, free: 0.9, alpha: 0.55 },
+  { name: 'Secondary', full: 'Secondary', hint: 'Elevations, corners, intersections of planes', lead: 'HB · F/H', end: 3.6, mid: 1.25, free: 1.6, alpha: 1 },
+  { name: 'Major', full: 'Major / primary', hint: 'Cuts, profiles, slices through spaces', lead: 'HB · F/H', end: 6.0, mid: 2.2, free: 2.6, alpha: 1 },
 ];
+// Line types after Ching. Dash patterns in px at 100% (on, off, on, off…), always starting and ending on a dash.
+const LINE_TYPES = {
+  solid: { name: 'Solid', hint: 'Cut, profile and elevation lines', dash: null },
+  above: { name: 'Dashed: above cut', hint: 'Overhead elements, longer dashes', dash: [15, 5.5] },
+  below: { name: 'Dashed: below cut', hint: 'Hidden elements, short tight dashes', dash: [7, 4.5] },
+  center: { name: 'Centerline', hint: 'Long–short–long, long dashes about equal', dash: [30, 5, 5, 5] },
+};
+const typeOf = el => LINE_TYPES[el.k] ? el.k : 'solid';
 const INKS = [
   { name: 'Ink', hex: '#2c2e29' },
   { name: 'Red', hex: '#af3129' },
@@ -52,7 +61,7 @@ const STORE_KEY = 'talago-arch-v1';
 const Store = {
   data: null,
   defaults() {
-    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line' } };
+    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', ltype: 'solid' } };
   },
   load() {
     let d = null;
@@ -146,13 +155,16 @@ function penPicker() {
   return Modal.open(`<h2>Pen</h2>
     <div class="label">Ink</div>
     <div class="colors">${INKS.map((k, i) => `<button type="button" data-c="${i}" class="${i === s.color ? 'on' : ''}" style="background:${k.hex}" aria-label="${k.name}"></button>`).join('')}</div>
-    <div class="label">Weight</div>
-    <div class="opts weights">${PEN_WEIGHTS.map((w, i) => `<button type="button" data-w="${i}" class="${i === s.pen ? 'on' : ''}"><i style="height:${[1.5, 2.5, 4][i]}px"></i>${w.name}</button>`).join('')}</div>
+    <div class="label">Line weight</div>
+    <div class="sheet-list pick">${[2, 1, 0].map(i => { const w = PEN_WEIGHTS[i]; return `<button type="button" data-w="${i}" class="${i === s.pen ? 'on' : ''}"><span>${w.full}<small>${w.hint}</small></span><svg class="lt" viewBox="0 0 64 12"><path d="M3 6h58" style="stroke-width:${[1, 1.8, 3.2][i]};opacity:${w.alpha}"/></svg></button>`; }).join('')}</div>
+    <div class="label">Line type</div>
+    <div class="sheet-list pick">${Object.entries(LINE_TYPES).map(([k, t]) => `<button type="button" data-k="${k}" class="${k === s.ltype ? 'on' : ''}"><span>${t.name}<small>${t.hint}</small></span><svg class="lt" viewBox="0 0 64 12"><path d="M3 6h58" style="stroke-dasharray:${t.dash ? t.dash.map(v => v * 0.55).join(' ') : 'none'}"/></svg></button>`).join('')}</div>
     <div class="btns" style="margin-top:20px"><button type="button" class="btn primary" data-x>Done</button></div>`,
     (c, done) => {
       $('[data-x]', c).onclick = () => done(true);
       $$('[data-c]', c).forEach(b => b.onclick = () => { s.color = +b.dataset.c; $$('[data-c]', c).forEach(x => x.classList.toggle('on', x === b)); });
       $$('[data-w]', c).forEach(b => b.onclick = () => { s.pen = +b.dataset.w; $$('[data-w]', c).forEach(x => x.classList.toggle('on', x === b)); });
+      $$('[data-k]', c).forEach(b => b.onclick = () => { s.ltype = b.dataset.k; $$('[data-k]', c).forEach(x => x.classList.toggle('on', x === b)); });
     });
 }
 
@@ -191,8 +203,22 @@ const elevated = el => isFree(el) ? el.pts.some(p => p.z) : !!(el.a.z || el.b.z)
 /* ================================================================ drawing primitives */
 function weightScale(z) { return Math.sqrt(z / BASE_Z); }
 
-/** Straight line, heavier at both ends (the architect's "hit" at start and finish). */
-function drawTaper(ctx, ax, ay, bx, by, wEnd, wMid, color) {
+/** Small deterministic random generator, so each line keeps the same wiggle on every redraw. */
+function seededRand(seed) {
+  let t = (seed >>> 0) || 1;
+  return () => { t = (t + 0x6D2B79F5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; };
+}
+/** Seed from a line's own coordinates. */
+function lineSeed(a, b) {
+  let h = 2166136261;
+  for (const v of [a.x, a.y, a.z || 0, b.x, b.y, b.z || 0]) { h ^= Math.round(v * 1000); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
+/** Straight line, heavier at both ends (the architect's "hit" at start and finish).
+ *  Every line gets a slight hand-drawn wiggle that fades out at both ends,
+ *  so corners still meet exactly. */
+function drawTaper(ctx, ax, ay, bx, by, wEnd, wMid, color, seed, dash) {
   const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy);
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -200,20 +226,67 @@ function drawTaper(ctx, ax, ay, bx, by, wEnd, wMid, color) {
   const nx = -dy / L, ny = dx / L;
   const k = Math.min(L * 0.16, 9 + wEnd * 3);           // length of the heavy end zone
   const half = d => (wMid + (wEnd - wMid) * Math.exp(-d / Math.max(k, 0.001))) / 2;
-  const N = clamp(Math.ceil(L / 3), 10, 160);
+  // Hand wiggle: a gentle bow plus two soft waves, amplitude in screen px.
+  let off = () => 0;
+  if (seed != null && L > 12) {
+    const rnd = seededRand(seed);
+    const amp = clamp(L * 0.0045, 0.35, 1.9);
+    const bow = (rnd() * 2 - 1) * amp * 0.9;
+    const f1 = 1 + rnd() * 1.5, f2 = 2.5 + rnd() * 2.5, p1 = rnd() * 6.283, p2 = rnd() * 6.283;
+    const a1 = amp * (0.55 + rnd() * 0.3), a2 = amp * (0.2 + rnd() * 0.2);
+    off = t => {
+      const env = Math.pow(Math.sin(Math.PI * t), 0.7);   // 0 at both ends
+      return env * (bow + a1 * Math.sin(6.283 * f1 * t + p1) + a2 * Math.sin(6.283 * f2 * t + p2));
+    };
+  }
+  if (dash && L > dash[0] * 1.6) return drawDashes(ctx, ax, ay, dx, dy, nx, ny, L, wEnd, wMid, off, dash);
+  const N = clamp(Math.ceil(L / 3), 10, 200);
   const ts = [];
   for (let i = 0; i <= N; i++) ts.push(0.5 - 0.5 * Math.cos(Math.PI * i / N)); // denser near the ends
   ts.forEach((t, i) => {
-    const h = half(Math.min(t, 1 - t) * L), x = ax + dx * t + nx * h, y = ay + dy * t + ny * h;
+    const o = off(t), h = half(Math.min(t, 1 - t) * L);
+    const x = ax + dx * t + nx * (o + h), y = ay + dy * t + ny * (o + h);
     i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   });
   for (let i = ts.length - 1; i >= 0; i--) {
-    const t = ts[i], h = half(Math.min(t, 1 - t) * L);
-    ctx.lineTo(ax + dx * t - nx * h, ay + dy * t - ny * h);
+    const t = ts[i], o = off(t), h = half(Math.min(t, 1 - t) * L);
+    ctx.lineTo(ax + dx * t + nx * (o - h), ay + dy * t + ny * (o - h));
   }
   ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.arc(ax, ay, wEnd / 2, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.arc(bx, by, wEnd / 2, 0, Math.PI * 2); ctx.fill();
+}
+
+/** Split a line of length L into dashes [t0, t1] that start and end on a full dash. */
+function dashSegments(L, pat) {
+  const cycle = pat.reduce((s, v) => s + v, 0), first = pat[0];
+  const n = Math.max(1, Math.round((L - first) / cycle));
+  const k = L / (n * cycle + first);                 // stretch the pattern to fit exactly
+  const segs = [];
+  let d = 0, i = 0;
+  while (d < L - 1e-6) {
+    const len = pat[i % pat.length] * k;
+    if (i % 2 === 0) segs.push([d / L, Math.min(d + len, L) / L]);
+    d += len; i++;
+  }
+  return segs;
+}
+/** Dashed / centerline rendering along the same wiggled path, each dash with a light hit at its ends. */
+function drawDashes(ctx, ax, ay, dx, dy, nx, ny, L, wEnd, wMid, off, dash) {
+  const base = wMid * 1.2, hit = Math.min(wEnd * 0.6, wMid * 1.6);
+  for (let [t0, t1] of dashSegments(L, dash)) {
+    // Pull each dash end in by its cap radius so the gaps stay open and crisp.
+    const inset = (hit / 2) / L, mid = (t0 + t1) / 2;
+    t0 = Math.min(t0 + inset, mid); t1 = Math.max(t1 - inset, mid);
+    const len = (t1 - t0) * L, M = clamp(Math.ceil(len / 2), 3, 40);
+    const hw = t => { const dd = Math.min(t - t0, t1 - t) * L; return (base + (hit - base) * Math.exp(-dd / 2.5)) / 2; };
+    const P = (t, sgn) => { const o = off(t), h = hw(t) * sgn; return [ax + dx * t + nx * (o + h), ay + dy * t + ny * (o + h)]; };
+    ctx.beginPath();
+    for (let j = 0; j <= M; j++) { const [x, y] = P(t0 + (t1 - t0) * j / M, 1); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    for (let j = M; j >= 0; j--) { const [x, y] = P(t0 + (t1 - t0) * j / M, -1); ctx.lineTo(x, y); }
+    ctx.closePath(); ctx.fill();
+    for (const t of [t0, t1]) { const o = off(t); ctx.beginPath(); ctx.arc(ax + dx * t + nx * o, ay + dy * t + ny * o, hw(t), 0, Math.PI * 2); ctx.fill(); }
+  }
 }
 
 /** Freehand pencil stroke, smoothed through midpoints. pts in screen px. */
@@ -231,37 +304,58 @@ function drawFree(ctx, pts, w, color) {
 }
 
 /** Dot grid on the plan (z = 0), drawn through the current projection. */
+/** On-screen spacing (px) of one grid step under a projection. */
+function gridUnitPx(z, proj = PLAN) {
+  if (proj.flat) return z;
+  const O = proj.P({ x: 0, y: 0 }), ex = proj.P({ x: 1, y: 0 }), ey = proj.P({ x: 0, y: 1 });
+  return Math.min(Math.hypot(ex.x - O.x, ex.y - O.y), Math.hypot(ey.x - O.x, ey.y - O.y)) * z;
+}
+// Half-grid dots fade in once the main dots are this far apart on screen; snapping uses them from SUB_SNAP_PX.
+const SUB_SHOW_PX = 40, SUB_FULL_PX = 64, SUB_SNAP_PX = 44;
+/** Grid step used for snapping: 1, or 0.5 when the half-grid dots are showing. */
+function snapStepFor(z, proj = PLAN) { return gridUnitPx(z, proj) >= SUB_SNAP_PX ? 0.5 : 1; }
+const roundTo = (v, step) => Math.round(v / step) * step;
+
+/** Dot grid on the plan (z = 0), drawn through the current projection,
+ *  with lighter half-grid dots when zoomed in far enough. */
 function drawDots(ctx, view, W, H, proj = PLAN) {
   const { ox, oy, z } = view;
+  if (!(z > 0) || !isFinite(z) || !isFinite(ox) || !isFinite(oy)) return;   // never loop on a bad view
+  const unit = gridUnitPx(z, proj);
+  if (!(unit > 1e-6) || !isFinite(unit)) return;
   const r = clamp(z * 0.06, 0.8, 1.6);
-  ctx.fillStyle = DOT;
-  ctx.beginPath();
+  let step = 1;
+  while (step * unit < 11) step *= 2;
+  // Visible range of grid coordinates.
+  let x0, x1, y0, y1;
   if (proj.flat) {
-    let step = 1;
-    while (step * z < 11) step *= 2;
-    const x0 = Math.floor(-ox / z / step) * step, x1 = Math.ceil((W - ox) / z / step) * step;
-    const y0 = Math.floor(-oy / z / step) * step, y1 = Math.ceil((H - oy) / z / step) * step;
-    for (let gy = y0; gy <= y1; gy += step) {
-      const sy = oy + gy * z;
-      for (let gx = x0; gx <= x1; gx += step) { const sx = ox + gx * z; ctx.moveTo(sx + r, sy); ctx.arc(sx, sy, r, 0, Math.PI * 2); }
-    }
+    x0 = -ox / z; x1 = (W - ox) / z; y0 = -oy / z; y1 = (H - oy) / z;
   } else {
-    const O = proj.P({ x: 0, y: 0 }), ex = proj.P({ x: 1, y: 0 }), ey = proj.P({ x: 0, y: 1 });
-    const unit = Math.min(Math.hypot(ex.x - O.x, ex.y - O.y), Math.hypot(ey.x - O.x, ey.y - O.y)) * z;
-    let step = 1;
-    while (step * unit < 11) step *= 2;
     const cs = [[0, 0], [W, 0], [0, H], [W, H]].map(([sx, sy]) => proj.inv((sx - ox) / z, (sy - oy) / z, 0));
-    let x0 = Math.min(...cs.map(c => c.x)), x1 = Math.max(...cs.map(c => c.x));
-    let y0 = Math.min(...cs.map(c => c.y)), y1 = Math.max(...cs.map(c => c.y));
-    while (((x1 - x0) / step) * ((y1 - y0) / step) > 60000) step *= 2;
-    x0 = Math.floor(x0 / step) * step; y0 = Math.floor(y0 / step) * step;
-    for (let gy = y0; gy <= y1; gy += step) for (let gx = x0; gx <= x1; gx += step) {
-      const q = proj.P({ x: gx, y: gy }), sx = ox + q.x * z, sy = oy + q.y * z;
-      if (sx < -2 || sy < -2 || sx > W + 2 || sy > H + 2) continue;
-      ctx.moveTo(sx + r, sy); ctx.arc(sx, sy, r, 0, Math.PI * 2);
-    }
+    x0 = Math.min(...cs.map(c => c.x)); x1 = Math.max(...cs.map(c => c.x));
+    y0 = Math.min(...cs.map(c => c.y)); y1 = Math.max(...cs.map(c => c.y));
   }
-  ctx.fill();
+  while (((x1 - x0) / step) * ((y1 - y0) / step) > 60000) step *= 2;
+  const sub = step === 1 && unit >= SUB_SHOW_PX;
+  const fine = sub ? 0.5 : step;
+  x0 = Math.floor(x0 / fine) * fine; y0 = Math.floor(y0 / fine) * fine;
+  const main = new Path2D(), half = new Path2D(), rh = r * 0.62;
+  for (let gy = y0; gy <= y1 + 1e-9; gy += fine) for (let gx = x0; gx <= x1 + 1e-9; gx += fine) {
+    const q = proj.flat ? { x: gx, y: gy } : proj.P({ x: gx, y: gy });
+    const sx = ox + q.x * z, sy = oy + q.y * z;
+    if (sx < -2 || sy < -2 || sx > W + 2 || sy > H + 2) continue;
+    const onMain = Math.abs(gx % step) < 1e-9 && Math.abs(gy % step) < 1e-9;
+    if (onMain) { main.moveTo(sx + r, sy); main.arc(sx, sy, r, 0, Math.PI * 2); }
+    else { half.moveTo(sx + rh, sy); half.arc(sx, sy, rh, 0, Math.PI * 2); }
+  }
+  ctx.fillStyle = DOT;
+  ctx.fill(main);
+  if (sub) {
+    ctx.globalAlpha = 0.35 + 0.65 * clamp((unit - SUB_SHOW_PX) / (SUB_FULL_PX - SUB_SHOW_PX), 0, 1);
+    ctx.fillStyle = '#c9cac3';
+    ctx.fill(half);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawDim(ctx, ax, ay, bx, by, label, color, offset = 12) {
@@ -295,14 +389,15 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
     const hi = el === opts.highlight;
     const color = hi ? RED : inkOf(el);
     // In plan, anything drawn above the ground plane is shown lighter.
-    const fade = proj.flat && elevated(el) ? 0.35 : 1;
+    const fade = (proj.flat && elevated(el) ? 0.35 : 1) * (pw.alpha || 1);
     if (isFree(el)) {
       ctx.globalAlpha = (hi ? 0.6 : 0.92) * fade;
       drawFree(ctx, el.pts.map(S), pw.free * ws, color);
     } else {
       ctx.globalAlpha = (hi ? 0.6 : 1) * fade;
       const a = S(el.a), b = S(el.b);
-      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, color);
+      const dash = LINE_TYPES[typeOf(el)].dash;
+      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, color, lineSeed(el.a, el.b), dash && dash.map(v => v * ws));
     }
     ctx.globalAlpha = 1;
   }
@@ -327,12 +422,16 @@ function bounds(els, proj = PLAN) {
   }
   return { x0, y0, x1, y1 };
 }
-function fitView(els, W, H, pad = 2, maxZ = 60, proj = PLAN) {
+/** Fit the drawing in a W×H area. `chrome` = px reserved for toolbars (editor only). */
+function fitView(els, W, H, pad = 2, maxZ = 60, proj = PLAN, chrome = 0) {
   const b = bounds(els, proj);
   if (!b) return proj.flat ? { ox: (W % BASE_Z) / 2, oy: (H % BASE_Z) / 2, z: BASE_Z } : { ox: W / 2, oy: H / 3, z: BASE_Z };
   const bw = Math.max(b.x1 - b.x0, 1) + pad * 2, bh = Math.max(b.y1 - b.y0, 1) + pad * 2;
-  const z = Math.min(W / bw, (H - 150) / bh, maxZ);
-  return { z, ox: W / 2 - ((b.x0 + b.x1) / 2) * z, oy: H / 2 - 20 - ((b.y0 + b.y1) / 2) * z };
+  const usableH = Math.max(H - chrome, H * 0.5, 1);
+  let z = Math.min(Math.max(W, 1) / bw, usableH / bh, maxZ);
+  if (!(z > 0.05) || !isFinite(z)) z = 0.05;
+  const shift = chrome ? -20 : 0;
+  return { z, ox: W / 2 - ((b.x0 + b.x1) / 2) * z, oy: H / 2 + shift - ((b.y0 + b.y1) / 2) * z };
 }
 
 /* ================================================================ editor */
@@ -408,7 +507,7 @@ const Editor = {
     this.pointers.clear();
     this.resize(true);
     const saved = this.isAxo ? sketch.axoView : sketch.view;
-    this.view = saved && saved.z ? { ...saved } : fitView(sketch.lines, this.W, this.H, 2, 60, this.proj);
+    this.view = saved && saved.z > 0 && isFinite(saved.ox) && isFinite(saved.oy) ? { ...saved } : fitView(sketch.lines, this.W, this.H, 2, 60, this.proj, 150);
     this.setStatus('saved');
     this.syncUI();
     this.render();
@@ -459,7 +558,7 @@ const Editor = {
     const toProj = makeProj(to);
     const saved = mode === 'axo' ? null : this.sketch.view;
     const toView = !refit || (saved && saved.z) ? (saved && saved.z ? { ...saved } : { ...this.view })
-      : fitView(this.sketch.lines, this.W, this.H, 3, 48, toProj);
+      : fitView(this.sketch.lines, this.W, this.H, 3, 48, toProj, 150);
     const v0 = { ...this.view }, t0 = performance.now(), dur = 750;
     const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     const L = (a, b, e) => a + (b - a) * e;
@@ -511,7 +610,8 @@ const Editor = {
     }
     return best;
   },
-  gridRound(p) { return Store.settings.snap ? { x: Math.round(p.x), y: Math.round(p.y), z: p.z } : p; },
+  snapStep() { return snapStepFor(this.view.z, this.proj); },
+  gridRound(p) { if (!Store.settings.snap) return p; const st = this.snapStep(); return { x: roundTo(p.x, st), y: roundTo(p.y, st), z: p.z }; },
   /** Where a line starts. In plan everything sits on the ground; in axo it can start on any corner. */
   snapStart(pos) {
     const ep = this.nearestEndpoint(pos);
@@ -540,7 +640,7 @@ const Editor = {
       const perp = Math.hypot(q.x - (a.x + sq * ux), q.y - (a.y + sq * uy)) * z;
       if (along < best && perp < 60) { best = along; s = sq; aligned = true; snapped = perp < 0.5; }
     }
-    if (!aligned && Store.settings.snap) s = Math.round(raw);
+    if (!aligned && Store.settings.snap) s = roundTo(raw, this.snapStep());
     return { p: { x: a.x + s * ux, y: a.y + s * uy, z: 0 }, snapped };
   },
   /** Axo drafting: lock to the nearest axo axis (x, y, height, or plan 45°) and measure along it. */
@@ -575,7 +675,7 @@ const Editor = {
       const along = Math.abs(sq - raw) * dl, perp = Math.hypot(Es.x - Qs.x, Es.y - Qs.y);
       if (along < bestA && perp < 60) { bestA = along; s = sq; aligned = true; snapped = Math.hypot(q.x - e.x, q.y - e.y, qz - e.z) < 1e-6; }
     }
-    if (!aligned && s0.snap) s = Math.round(raw);
+    if (!aligned && s0.snap) s = roundTo(raw, this.snapStep());
     return { p: { x: a.x + s * d[0], y: a.y + s * d[1], z: az + s * d[2] }, snapped, axis: ax.name };
   },
 
@@ -677,7 +777,9 @@ const Editor = {
       const A = this.toScreen(d.a), B = this.toScreen(d.b);
       if (!cancelled && Math.hypot(B.x - A.x, B.y - A.y) > 4 && len3(d.a, d.b) > 1e-6) {
         const before = this.snapshot();
-        this.sketch.lines.push({ a: pt(d.a), b: pt(d.b), w: Store.settings.pen, c: Store.settings.color });
+        const ln = { a: pt(d.a), b: pt(d.b), w: Store.settings.pen, c: Store.settings.color };
+        if (Store.settings.ltype && Store.settings.ltype !== 'solid') ln.k = Store.settings.ltype;
+        this.sketch.lines.push(ln);
         this.commit(before);
       }
       this.render();
@@ -865,7 +967,7 @@ const Editor = {
   },
 
   fit() {
-    this.view = fitView(this.sketch.lines, this.W, this.H, 3, 48, this.proj);
+    this.view = fitView(this.sketch.lines, this.W, this.H, 3, 48, this.proj, 150);
     this.saveView(); this.render();
   },
 
@@ -897,12 +999,13 @@ const Editor = {
     return exportPng(this.project, this.sketch, this.isAxo ? makeProj(axoParams(this.sketch)) : PLAN);
   },
   async downloadPng() {
-    downloadBlob(await this.renderPng(), `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}${this.isAxo ? ' (axo)' : ''}.png`);
+    let blob; try { blob = await this.renderPng(); } catch (_) { return toast('Could not create the image. Try zooming the drawing smaller.'); }
+    downloadBlob(blob, `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}${this.isAxo ? ' (axo)' : ''}.png`);
   },
   async copyText() { await copyOrShow(sketchText(this.project, this.sketch), 'Copied. Paste it into ChatGPT.'); },
   async share() {
     this.flush();
-    const blob = await this.renderPng();
+    let blob; try { blob = await this.renderPng(); } catch (_) { return toast('Could not create the image. Try Copy as text instead.'); }
     const name = `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}${this.isAxo ? ' (axo)' : ''}.png`;
     const file = new File([blob], name, { type: 'image/png' });
     const text = sketchText(this.project, this.sketch);
@@ -928,15 +1031,16 @@ const Editor = {
     this.syncZoom();
     const pw = PEN_WEIGHTS[s.pen], ws = weightScale(this.view.z), ink = INKS[s.color].hex;
     if (this.stroke) {
-      ctx.globalAlpha = 0.92;
+      ctx.globalAlpha = 0.92 * (pw.alpha || 1);
       drawFree(ctx, this.stroke.el.pts.map(p => this.toScreen(p)), pw.free * ws, ink);
       ctx.globalAlpha = 1;
     }
     const d = this.drawing;
     if (d) {
       const a = this.toScreen(d.a), b = this.toScreen(d.b);
-      ctx.globalAlpha = 0.85;
-      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, ink);
+      ctx.globalAlpha = 0.85 * (pw.alpha || 1);
+      const dash = LINE_TYPES[s.ltype] && LINE_TYPES[s.ltype].dash;
+      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, ink, lineSeed(d.a, d.b), dash && dash.map(v => v * ws));
       ctx.globalAlpha = 1;
       const ring = (p, on) => { if (!on) return; ctx.strokeStyle = RED; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.stroke(); };
       ring(a, d.snapA); ring(b, d.snapB);
@@ -960,7 +1064,8 @@ function exportPng(project, sketch, proj = PLAN) {
   const els = sketch.lines, z = 40, pad = 2.5;
   const b = bounds(els, proj) || { x0: 0, y0: 0, x1: 16, y1: 12 };
   const wU = b.x1 - b.x0 + pad * 2, hU = b.y1 - b.y0 + pad * 2 + 1.5;
-  const zz = z * Math.min(1, 4096 / (wU * z), 4096 / (hU * z));
+  // Stay well inside iPhone Safari's canvas memory limit (~16.7M pixels).
+  const zz = z * Math.min(1, 2800 / (wU * z), 2800 / (hU * z));
   const W = Math.max(480, Math.round(wU * zz)), H = Math.max(360, Math.round(hU * zz));
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -973,7 +1078,7 @@ function exportPng(project, sketch, proj = PLAN) {
   ctx.textAlign = 'left'; ctx.fillStyle = MUTED; ctx.font = `14px ${SANS}`;
   const viewName = proj.flat ? 'plan' : `axo ${(AXO_TYPES[sketch.axo && sketch.axo.type] || AXO_TYPES['45']).name}`;
   ctx.fillText(`${project.name}  ·  ${sketch.name}  ·  ${viewName}  ·  grid ${fmtFeet(sketch.gridFt)}`, 52, H - 26.5);
-  return new Promise(res => c.toBlob(res, 'image/png'));
+  return new Promise((res, rej) => c.toBlob(bl => bl ? res(bl) : rej(new Error('PNG export failed')), 'image/png'));
 }
 
 function sketchText(project, sketch) {
@@ -988,6 +1093,7 @@ function sketchText(project, sketch) {
     `Grid spacing: ${fmtFeet(g)} between dots`,
     has3d ? 'Coordinates (x, y, z) in feet: x to the right and y downward on the plan, z = height above the plan.'
       : 'Coordinates in feet, origin top-left, x to the right, y downward.',
+    'Line weights and types follow Ching: major/primary = cuts and profiles, secondary = elevations and corners, grid/layout = construction; dashed above cut = overhead, dashed below cut = hidden.',
     `Straight lines (${lines.length}):`,
   ];
   lines.forEach((l, i) => {
@@ -998,7 +1104,8 @@ function sketchText(project, sketch) {
       let ang = Math.round(-Math.atan2(l.b.y - l.a.y, l.b.x - l.a.x) * 180 / Math.PI); if (ang < 0) ang += 360;
       desc = `plan angle ${ang}°${dz ? ', sloped' : ''}`;
     }
-    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtFeet(len)}, ${desc}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
+    const wt = (PEN_WEIGHTS[l.w] || PEN_WEIGHTS[1]).full.toLowerCase(), ty = LINE_TYPES[typeOf(l)].name.toLowerCase();
+    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtFeet(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
   });
   if (free.length) {
     out.push(`Freehand pencil strokes (${free.length}):`);
