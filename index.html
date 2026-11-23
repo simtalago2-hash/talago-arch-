@@ -44,48 +44,41 @@
 </svg>
 
 <main id="app">
-  <!-- Table of contents -->
+  <!-- Table of contents (diary-page style) -->
   <section id="view-toc" class="view page" hidden>
     <div class="page-inner">
-      <header class="topbar">
-        <div class="brand"><span class="logo">Ta</span><span class="brand-name">Talago Arch</span></div>
+      <header class="diary-head">
+        <h1 class="diary-title">Table of Contents</h1>
         <div class="top-actions">
           <button type="button" class="icon-btn" id="toc-ai" aria-label="ChatGPT and backups"><svg><use href="#i-spark"/></svg></button>
           <button type="button" class="icon-btn" id="toc-close" aria-label="Close notebook"><svg><use href="#i-book"/></svg></button>
         </div>
       </header>
-      <div class="kicker">Your personal notebook <svg><use href="#i-book-open"/></svg></div>
-      <h1>Table of contents<span class="dot">.</span></h1>
-      <p class="lede">A home for every project, and every possibility.</p>
-      <button id="add-project" class="btn-red" type="button"><svg><use href="#i-plus"/></svg> Add project</button>
-      <div class="table-head"><span>Project</span><span>Sketches</span></div>
-      <ol id="project-list" class="rows"></ol>
-      <footer class="page-foot">
-        <span>Ideas worth keeping.</span>
-        <span class="foot-right"><span id="toc-count">0 projects</span> <i>/</i> Talago Arch</span>
-      </footer>
+      <ol id="project-list" class="diary"></ol>
+      <footer class="diary-foot"><span>Talago Arch</span><span id="toc-count"></span></footer>
     </div>
   </section>
 
   <!-- Project -->
   <section id="view-project" class="view page" hidden>
     <div class="page-inner">
-      <header class="topbar">
-        <button type="button" class="crumb" id="proj-back"><svg><use href="#i-back"/></svg> Table of contents</button>
+      <header class="diary-head">
+        <button type="button" class="crumb" id="proj-back"><svg><use href="#i-back"/></svg> Contents</button>
         <div class="top-actions">
           <button type="button" class="icon-btn" id="proj-menu" aria-label="Project options"><svg><use href="#i-more"/></svg></button>
         </div>
       </header>
-      <div class="kicker" id="proj-kicker"></div>
-      <h1><span id="proj-title"></span><span class="dot">.</span></h1>
-      <p class="lede" id="proj-lede"></p>
-      <button id="add-sketch" class="btn-red" type="button"><svg><use href="#i-plus"/></svg> New sketch</button>
-      <div class="table-head"><span>Sketches</span><span></span></div>
+      <div class="dots"></div>
+      <div class="proj-head">
+        <span class="e-num" id="proj-num"></span>
+        <div><h1 class="e-name" id="proj-title"></h1><div class="e-meta" id="proj-lede"></div></div>
+      </div>
+      <div class="dots"></div>
+      <button id="add-sketch" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New sketch</span></button>
+      <div class="dots"></div>
       <div id="sketch-grid" class="sketch-grid"></div>
-      <footer class="page-foot">
-        <span>Ideas worth keeping.</span>
-        <span class="foot-right">Talago Arch</span>
-      </footer>
+      <div class="dots end"></div>
+      <footer class="diary-foot"><span>Talago Arch</span><span id="proj-count"></span></footer>
     </div>
   </section>
 

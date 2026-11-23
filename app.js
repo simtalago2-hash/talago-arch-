@@ -872,21 +872,26 @@ window.addEventListener('hashchange', route);
 function renderToc() {
   const ps = Store.data.projects;
   $('#toc-count').textContent = plural(ps.length, 'project', 'projects');
-  const list = $('#project-list');
-  if (!ps.length) {
-    list.innerHTML = `<li class="empty">No projects yet. Tap <b>Add project</b> to start your first one.</li>`;
-    return;
-  }
-  list.innerHTML = ps.map(p => `<li>
-      <button type="button" class="row" data-open="${p.id}">
-        <span class="folder"><svg><use href="#i-folder"/></svg></span>
-        <span class="row-text"><span class="row-name">${esc(p.name)}</span><span class="row-sub">Updated ${fmtDate(p.updated)}</span></span>
-        <span class="leader"></span>
-        <span class="row-count">${pad2(p.sketches.length)}</span>
-        <svg class="chev"><use href="#i-chev"/></svg>
-      </button></li>`).join('');
+  const entries = ps.map((p, i) => {
+    const names = p.sketches.map(s => esc(s.name)).join('  ·  ');
+    return `<li><div class="dots"></div>
+      <button type="button" class="entry" data-open="${p.id}">
+        <span class="e-num">${i + 1}</span>
+        <span class="e-body">
+          <span class="e-name">${esc(p.name)}</span>
+          <span class="e-meta">${pad2(p.sketches.length)} ${p.sketches.length === 1 ? 'sketch' : 'sketches'} · Updated ${fmtDate(p.updated)}</span>
+          ${names ? `<span class="e-sketches">${names}</span>` : ''}
+        </span>
+      </button></li>`;
+  }).join('');
+  $('#project-list').innerHTML = entries +
+    `<li><div class="dots"></div>
+      <button type="button" class="e-add" id="add-project"><span class="e-num">+</span><span class="e-name">Add project</span></button>
+      ${ps.length ? '' : '<div class="empty-note">Your projects will be listed here, like days in a diary.</div>'}</li>
+    <li class="grow"></li><li><div class="dots"></div></li>`;
 }
 $('#project-list').addEventListener('click', e => {
+  if (e.target.closest('#add-project')) return addProject();
   const o = e.target.closest('[data-open]');
   if (o) go(`#/p/${o.dataset.open}`);
 });
@@ -907,13 +912,13 @@ $('#project-list').addEventListener('click', e => {
   list.addEventListener('click', e => { if (t === -1) { e.stopImmediatePropagation(); t = 0; } }, true);
 })();
 
-$('#add-project').onclick = async () => {
+async function addProject() {
   const name = await promptText('New project', '', 'Create');
   if (!name) return;
   const p = { id: uid(), name, created: now(), updated: now(), sketches: [] };
   Store.data.projects.push(p); Store.save();
   go(`#/p/${p.id}`);
-};
+}
 $('#toc-close').onclick = () => showCover();
 $('#toc-ai').onclick = async () => {
   const acts = [
@@ -961,15 +966,16 @@ async function projectMenu(p) {
 let currentProject = null;
 function renderProject(p) {
   currentProject = p;
-  $('#proj-kicker').textContent = `Project ${pad2(Store.data.projects.indexOf(p) + 1)}`;
+  $('#proj-num').textContent = Store.data.projects.indexOf(p) + 1;
   $('#proj-title').textContent = p.name;
-  $('#proj-lede').textContent = `${plural(p.sketches.length, 'sketch', 'sketches')} · Updated ${fmtDate(p.updated)}`;
+  $('#proj-lede').textContent = `${pad2(p.sketches.length)} ${p.sketches.length === 1 ? 'sketch' : 'sketches'} · Updated ${fmtDate(p.updated)}`;
+  $('#proj-count').textContent = `Project ${Store.data.projects.indexOf(p) + 1}`;
   const grid = $('#sketch-grid');
   grid.innerHTML = p.sketches.length ? p.sketches.map(s => `<div class="card">
       <button type="button" class="open" data-open="${s.id}"><canvas class="thumb" data-thumb="${s.id}"></canvas></button>
       <div class="meta"><span class="nm">${esc(s.name)}</span><span class="dt">Updated ${fmtDate(s.updated)} · Grid ${fmtGrid(s.gridFt)}</span></div>
       <button type="button" class="more" data-more="${s.id}" aria-label="Options for ${esc(s.name)}"><svg><use href="#i-more"/></svg></button>
-    </div>`).join('') : `<div class="empty">No sketches yet. Tap <b>New sketch</b> to open a fresh page.</div>`;
+    </div>`).join('') : `<div class="empty-note" style="padding-left:0">No sketches yet. Tap New sketch to open a fresh page.</div>`;
   requestAnimationFrame(() => $$('[data-thumb]', grid).forEach(c => renderThumb(c, Store.sketch(p, c.dataset.thumb))));
 }
 $('#sketch-grid').addEventListener('click', e => {

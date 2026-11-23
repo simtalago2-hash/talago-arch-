@@ -5,7 +5,7 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
 ## Features
 
 - **Red notebook cover** fills the screen and flips open on launch. It reopens on the last page you were on. The book icon on the Contents page closes the notebook again.
-- **Table of contents** lists your projects with **+ Add project**. Open a project and tap **+ New sketch**. Long-press a project (or use ⋯ inside it) to rename, reorder or delete it.
+- **Table of contents** is laid out like a Moleskine diary page: each project is an entry under a row of dots, with its number, name, sketch count and sketch names. Tap **+ Add project** to add one. Open a project and tap **+ New sketch**. Long-press a project (or use ⋯ inside it) to rename, reorder or delete it.
 - **Full-screen sketch pages** with a dot grid and no border.
 - **Tools** (bottom toolbar):
   - **Straight line** (L): drag and you get a clean line from A to B, heavier at both ends.
