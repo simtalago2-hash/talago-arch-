@@ -75,12 +75,47 @@
         <span class="e-num" id="proj-num"></span>
         <div><h1 class="e-name" id="proj-title"></h1><div class="e-meta" id="proj-lede"></div></div>
       </div>
+      <nav class="proj-tabs" id="proj-tabs" role="tablist">
+        <button type="button" role="tab" data-tab="sketches">Sketches <span class="ct" id="ct-sketches"></span></button>
+        <button type="button" role="tab" data-tab="schedules">Schedules <span class="ct" id="ct-schedules"></span></button>
+      </nav>
       <div class="dots"></div>
-      <button id="add-sketch" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New sketch</span></button>
-      <div class="dots"></div>
-      <div id="sketch-grid" class="sketch-grid"></div>
+      <div class="tab-pane" id="tab-sketches" role="tabpanel">
+        <button id="add-sketch" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New sketch</span></button>
+        <div class="dots"></div>
+        <div id="sketch-grid" class="sketch-grid"></div>
+      </div>
+      <div class="tab-pane" id="tab-schedules" role="tabpanel" hidden>
+        <button id="add-schedule" class="e-add" type="button"><span class="e-num">+</span><span class="e-name">New schedule</span></button>
+        <div class="dots"></div>
+        <div id="schedule-grid" class="sketch-grid"></div>
+      </div>
       <div class="dots end"></div>
       <footer class="diary-foot"><span>Talago Arch</span><span id="proj-count"></span></footer>
+    </div>
+  </section>
+
+  <!-- Schedule: editable gantt in the sketchbook style -->
+  <section id="view-schedule" class="view" hidden>
+    <header class="sch-top">
+      <button type="button" class="tb" id="sch-back" aria-label="Back to project"><svg><use href="#i-back"/></svg></button>
+      <div class="sch-titles"><div class="sch-kicker">Schedule</div><div class="sch-title" id="sch-title"></div></div>
+      <button type="button" class="sch-addbtn" id="sch-add"><svg><use href="#i-plus"/></svg> Task</button>
+      <button type="button" class="tb" id="sch-menu" aria-label="Schedule options"><svg><use href="#i-more"/></svg></button>
+    </header>
+    <div class="sch-scroll" id="sch-scroll">
+      <div class="sch-grid" id="sch-body">
+        <div class="sch-corner">Task</div>
+        <div class="sch-head" id="sch-head"></div>
+        <div class="sch-names" id="sch-names"></div>
+        <div class="sch-tl" id="sch-tl"></div>
+      </div>
+    </div>
+    <div class="sch-bottom">
+      <div class="seg" id="sch-zoom" role="group" aria-label="Scale">
+        <button type="button" data-z="day">Day</button><button type="button" data-z="week">Week</button><button type="button" data-z="month">Month</button>
+      </div>
+      <div class="sch-span" id="sch-span"></div>
     </div>
   </section>
 
@@ -118,7 +153,7 @@
       <span class="sep"></span>
       <button type="button" class="swatch-btn" data-act="pen" aria-label="Ink and weight"><span class="swatch" id="pen-swatch"></span><svg class="caret"><use href="#i-down"/></svg></button>
       <button type="button" class="txt" data-act="ortho" aria-label="Ortho mode (O)">Ortho</button>
-      <button type="button" class="txt" data-act="grid" aria-label="Grid spacing"><span id="grid-label">1'</span></button>
+      <button type="button" class="txt" data-act="grid" aria-label="Grid spacing"><span id="grid-label">Grid 1</span></button>
     </nav>
 
     <div class="sk-bottom">
@@ -137,11 +172,34 @@
 <div id="cover" class="cover" role="button" aria-label="Open notebook">
   <div class="cover-leaf">
     <div class="cover-face">
-      <div class="cover-mark">
-        <div class="cover-mono">Ta</div>
-        <div class="cover-title">Talago Arch</div>
-        <div class="cover-sub">Personal sketchbook</div>
+      <!-- Paper band wrapped around the cover, carrying the Talago Arch logo -->
+      <div class="wrap-band">
+        <div class="wrap-main">
+          <div class="wrap-brand"><span class="wrap-logo">Ta</span><span class="wrap-word">Talago Arch</span></div>
+          <div class="wrap-body">
+            <svg class="wrap-book" viewBox="0 0 120 80" aria-hidden="true">
+              <path class="pg" d="M60 14C48 8 30 7 10 9v58c20-2 38-1 50 5 12-6 30-7 50-5V9c-20-2-38-1-50 5z"/>
+              <path class="sp" d="M60 14v58"/>
+              <g class="dots">
+                <circle cx="20" cy="22" r="1"/><circle cx="28" cy="22" r="1"/><circle cx="36" cy="22" r="1"/><circle cx="44" cy="23" r="1"/><circle cx="52" cy="24" r="1"/>
+                <circle cx="20" cy="31" r="1"/><circle cx="28" cy="31" r="1"/><circle cx="36" cy="31" r="1"/><circle cx="44" cy="32" r="1"/><circle cx="52" cy="33" r="1"/>
+                <circle cx="20" cy="40" r="1"/><circle cx="28" cy="40" r="1"/><circle cx="36" cy="40" r="1"/><circle cx="44" cy="41" r="1"/><circle cx="52" cy="42" r="1"/>
+                <circle cx="20" cy="49" r="1"/><circle cx="28" cy="49" r="1"/><circle cx="36" cy="49" r="1"/><circle cx="44" cy="50" r="1"/><circle cx="52" cy="51" r="1"/>
+                <circle cx="20" cy="58" r="1"/><circle cx="28" cy="58" r="1"/><circle cx="36" cy="58" r="1"/><circle cx="44" cy="59" r="1"/><circle cx="52" cy="60" r="1"/>
+              </g>
+              <path class="dr" d="M70 50l14-14 14 14M70 50h28v12H70z"/>
+              <path class="rib" d="M64 14v66"/>
+            </svg>
+            <div class="wrap-title">
+              <div class="wrap-big">sketchbook</div>
+              <div class="wrap-small">Dotted pages</div>
+              <div class="wrap-note">plan · axo · hatch</div>
+            </div>
+          </div>
+        </div>
+        <div class="wrap-strip"><b>Drafting Notebook</b><span>Personal edition</span></div>
       </div>
+      <div class="cover-ribbon"></div>
       <div class="cover-open">Open notebook <svg><use href="#i-book-open"/></svg></div>
     </div>
     <div class="cover-back"></div>
@@ -153,5 +211,7 @@
 <div id="toast" class="toast" hidden></div>
 
 <script src="app.js"></script>
+<script src="dxf.js"></script>
+<script src="schedule.js"></script>
 </body>
 </html>

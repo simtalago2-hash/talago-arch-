@@ -13,7 +13,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const now = () => Date.now();
 const pad2 = n => String(n).padStart(2, '0');
 
-const GRID_OPTIONS = []; // 1' to 20' in 1/2' increments
+const GRID_OPTIONS = []; // 1 to 20 in 0.5 steps (unitless)
 for (let v = 1; v <= 20; v += 0.5) GRID_OPTIONS.push(v);
 
 // Line weights after Ching: index 0 = grid/layout, 1 = secondary, 2 = major/primary.
@@ -49,17 +49,19 @@ const isFree = el => el.t === 'f';
 const isHatch = el => el.t === 'h';
 const isLine = el => !el.t;
 
-function fmtFeet(ft) {
-  const inches = Math.round(Math.abs(ft) * 12);
-  return `${Math.floor(inches / 12)}'-${inches % 12}"`;
+/** Unitless number: up to two decimals, no trailing zeros (3.5 could be inches or feet). */
+function fmtLen(v) {
+  const r = Math.round(Math.abs(v) * 100) / 100;
+  return String(+r.toFixed(2));
 }
-function fmtGrid(v) { return v % 1 ? `${Math.floor(v)}½'` : `${v}'`; }
+const fmtGrid = v => fmtLen(v);
 function fmtDate(t) { return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
 function fileSafe(s) { return String(s).replace(/[\\/:*?"<>|]+/g, '-').trim() || 'sketch'; }
 function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
 
 /* ================================================================ storage */
 const STORE_KEY = 'talago-arch-v1';
+function normProject(p) { if (!Array.isArray(p.sketches)) p.sketches = []; if (!Array.isArray(p.schedules)) p.schedules = []; return p; }
 const Store = {
   data: null,
   defaults() {
@@ -72,6 +74,7 @@ const Store = {
     if (!d || !Array.isArray(d.projects)) d = def;
     d.settings = Object.assign({}, def.settings, d.settings || {});
     if (d.settings.tool === 'erase') d.settings.tool = 'line';
+    d.projects.forEach(normProject);
     this.data = d;
   },
   save() {
@@ -80,6 +83,7 @@ const Store = {
   },
   project(id) { return this.data.projects.find(p => p.id === id); },
   sketch(p, id) { return p ? p.sketches.find(s => s.id === id) : null; },
+  schedule(p, id) { return p ? p.schedules.find(s => s.id === id) : null; },
   get settings() { return this.data.settings; },
 };
 Store.load();
@@ -143,7 +147,7 @@ function actionSheet(title, actions) {
 }
 function gridPicker(current) {
   return Modal.open(`<h2>Grid spacing</h2>
-    <p>What one dot-to-dot space represents. The drawing isn't rescaled; this just lets you dimension from grid to grid.</p>
+    <p>What one dot-to-dot space represents, in whatever unit you have in mind (inches, feet…). The drawing isn't rescaled; this just lets you dimension from grid to grid.</p>
     <div class="opts">${GRID_OPTIONS.map(v => `<button type="button" data-v="${v}" class="${v === current ? 'on' : ''}">${fmtGrid(v)}</button>`).join('')}</div>
     <div class="btns" style="margin-top:18px"><button type="button" class="btn" data-x>Cancel</button></div>`,
     (c, done) => {
@@ -518,7 +522,7 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
       if (!isLine(el)) continue;
       const a = S(el.a), b = S(el.b);
       if (Math.hypot(b.x - a.x, b.y - a.y) < 28) continue;
-      drawDim(ctx, a.x, a.y, b.x, b.y, fmtFeet(len3(el.a, el.b) * opts.gridFt), MUTED);
+      drawDim(ctx, a.x, a.y, b.x, b.y, fmtLen(len3(el.a, el.b) * opts.gridFt), MUTED);
     }
   }
 }
@@ -758,9 +762,10 @@ const Editor = {
   hatchCorner(pos) {
     const ep = this.nearestEndpoint(pos);
     if (ep) { const s = this.toScreen(this.isAxo ? ep : { x: ep.x, y: ep.y }); return this.toHatch(s.x, s.y); }
-    const st = this.snapStep(), w = this.toPlane(pos.x, pos.y, 0), g = { x: roundTo(w.x, st), y: roundTo(w.y, st) };
-    if (!this.isAxo) return g;
-    const s = this.toScreen(g); return this.toHatch(s.x, s.y);
+    // In axo the dot grid lies on the ground, which says nothing about walls: only corners snap there.
+    if (this.isAxo) return this.toHatch(pos.x, pos.y);
+    const st = this.snapStep(), w = this.toPlane(pos.x, pos.y, 0);
+    return { x: roundTo(w.x, st), y: roundTo(w.y, st) };
   },
   /** The hatch outline from a freehand loop. With Snap on, the loop is straightened between
    *  corners and the corners land on grid dots or existing line ends. */
@@ -779,7 +784,9 @@ const Editor = {
       changed = false;
       for (let i = 0; i < poly.length; i++) {
         const p = poly[(i + poly.length - 1) % poly.length], q = poly[i], r = poly[(i + 1) % poly.length];
-        if (Math.abs((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)) < 1e-6) { poly.splice(i, 1); changed = true; break; }
+        const len = Math.hypot(r.x - p.x, r.y - p.y) || 1e-9;
+        const off = Math.abs((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)) / len;   // distance of q from line p–r
+        if (off < 2 / this.view.z) { poly.splice(i, 1); changed = true; break; }
       }
     }
     return poly;
@@ -1156,7 +1163,7 @@ const Editor = {
     if (v == null) return;
     this.sketch.gridFt = v;
     this.touch(); this.render();
-    toast(`Grid set to ${fmtFeet(v)} per dot`);
+    toast(`Grid set to ${fmtLen(v)} per dot`);
   },
   async clear() {
     if (!this.sketch.lines.length) return;
@@ -1203,10 +1210,11 @@ const Editor = {
     const s = Store.settings;
     const items = [
       { label: 'Snap to grid', value: 'snap', check: s.snap, hint: 'Line ends land on grid dots (G)' },
-      { label: 'Show dimensions', value: 'dims', check: s.dims, hint: 'True length of every line in feet (D)' },
+      { label: 'Show dimensions', value: 'dims', check: s.dims, hint: 'True length of every line, in grid units (D)' },
       { label: this.isAxo ? 'Axonometric options' : 'Axonometric view', value: 'axo', hint: this.isAxo ? 'Angle and rotation' : 'Rotate the drawing into axo (A)' },
       { label: 'Fit drawing to screen', value: 'fit' },
-      { label: 'Copy sketch as text for ChatGPT', value: 'copy', hint: 'Line coordinates and lengths in feet' },
+      { label: 'Copy sketch as text for ChatGPT', value: 'copy', hint: 'Line coordinates and lengths' },
+      { label: 'Export for Rhino (DXF)', value: 'dxf', hint: 'Curves, hatches, layers; choose units' },
       { label: 'Download PNG', value: 'png', hint: this.isAxo ? 'Saves the axo view' : 'Saves the plan view' },
       { label: 'Rename sketch', value: 'rename' },
     ];
@@ -1214,6 +1222,7 @@ const Editor = {
     if (v === 'snap' || v === 'dims' || v === 'fit') this.action(v);
     else if (v === 'axo') this.isAxo ? this.axoMenu() : this.setMode('axo');
     else if (v === 'copy') this.copyText();
+    else if (v === 'dxf') { this.flush(); exportForRhino(this.project, this.sketch); }
     else if (v === 'png') this.downloadPng();
     else if (v === 'rename') {
       const n = await promptText('Rename sketch', this.sketch.name);
@@ -1297,7 +1306,7 @@ const Editor = {
           if (ang < 0) ang += 360;
           tag = `${ang}°`;
         }
-        drawDim(ctx, a.x, a.y, b.x, b.y, `${fmtFeet(len * this.sketch.gridFt)}   ${tag}`, RED, 17);
+        drawDim(ctx, a.x, a.y, b.x, b.y, `${fmtLen(len * this.sketch.gridFt)}   ${tag}`, RED, 17);
       }
     }
   },
@@ -1321,7 +1330,7 @@ function exportPng(project, sketch, proj = PLAN) {
   ctx.fillText('Ta', 29, H - 26.5);
   ctx.textAlign = 'left'; ctx.fillStyle = MUTED; ctx.font = `14px ${SANS}`;
   const viewName = proj.flat ? 'plan' : `axo ${(AXO_TYPES[sketch.axo && sketch.axo.type] || AXO_TYPES['45']).name}`;
-  ctx.fillText(`${project.name}  ·  ${sketch.name}  ·  ${viewName}  ·  grid ${fmtFeet(sketch.gridFt)}`, 52, H - 26.5);
+  ctx.fillText(`${project.name}  ·  ${sketch.name}  ·  ${viewName}  ·  grid ${fmtLen(sketch.gridFt)}`, 52, H - 26.5);
   return new Promise((res, rej) => c.toBlob(bl => bl ? res(bl) : rej(new Error('PNG export failed')), 'image/png'));
 }
 
@@ -1334,9 +1343,10 @@ function sketchText(project, sketch) {
     'Talago Arch sketch',
     `Project: ${project.name}`,
     `Sketch: ${sketch.name}`,
-    `Grid spacing: ${fmtFeet(g)} between dots`,
-    has3d ? 'Coordinates (x, y, z) in feet: x to the right and y downward on the plan, z = height above the plan.'
-      : 'Coordinates in feet, origin top-left, x to the right, y downward.',
+    `Grid spacing: ${fmtLen(g)} between dots`,
+    'Units are unspecified (the drafter decides whether they mean inches, feet, metres…).',
+    has3d ? 'Coordinates (x, y, z): x to the right and y downward on the plan, z = height above the plan.'
+      : 'Coordinates: origin top-left, x to the right, y downward.',
     'Line weights and types follow Ching: major/primary = cuts and profiles, secondary = elevations and corners, grid/layout = construction; dashed above cut = overhead, dashed below cut = hidden.',
     `Straight lines (${lines.length}):`,
   ];
@@ -1349,7 +1359,7 @@ function sketchText(project, sketch) {
       desc = `plan angle ${ang}°${dz ? ', sloped' : ''}`;
     }
     const wt = (PEN_WEIGHTS[l.w] || PEN_WEIGHTS[1]).full.toLowerCase(), ty = LINE_TYPES[typeOf(l)].name.toLowerCase();
-    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtFeet(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
+    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtLen(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
   });
   if (hatches.length) {
     out.push(`Hatched areas (${hatches.length}):`);
@@ -1375,7 +1385,8 @@ function notebookText() {
   const out = ['Talago Arch notebook', `${plural(ps.length, 'project', 'projects')}`, ''];
   ps.forEach((p, i) => {
     out.push(`${pad2(i + 1)}. ${p.name} (${plural(p.sketches.length, 'sketch', 'sketches')})`);
-    p.sketches.forEach(s => out.push(`    - ${s.name}: ${plural(s.lines.length, 'element', 'elements')}, grid ${fmtFeet(s.gridFt)}, updated ${fmtDate(s.updated)}`));
+    p.sketches.forEach(s => out.push(`    - ${s.name}: ${plural(s.lines.length, 'element', 'elements')}, grid ${fmtLen(s.gridFt)}, updated ${fmtDate(s.updated)}`));
+    p.schedules.forEach(g => out.push(`    - Schedule “${g.name}”: ${plural(g.tasks.length, 'task', 'tasks')}`));
   });
   return out.join('\n');
 }
@@ -1409,7 +1420,7 @@ function renderThumb(canvas, sketch) {
 
 /* ================================================================ views + routing */
 let currentView = null;
-const views = { toc: $('#view-toc'), project: $('#view-project'), sketch: $('#view-sketch') };
+const views = { toc: $('#view-toc'), project: $('#view-project'), sketch: $('#view-sketch'), schedule: $('#view-schedule') };
 function go(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 function show(name) {
   for (const k in views) views[k].hidden = k !== name;
@@ -1418,15 +1429,23 @@ function show(name) {
 }
 
 function route() {
-  const m = location.hash.match(/^#\/p\/([^/]+)(?:\/s\/([^/]+))?/);
+  const m = location.hash.match(/^#\/p\/([^/]+)(?:\/s\/([^/]+))?(?:\/g\/([^/]+))?/);
   if (currentView === 'sketch') Editor.flush();
   if (m) {
     const p = Store.project(m[1]);
     if (!p) return go('#/');
+    if (m[3]) {
+      const sch = Store.schedule(p, m[3]);
+      if (!sch) return go(`#/p/${p.id}`);
+      Store.data.last = { p: p.id, g: sch.id }; projectTab(p, 'schedules');
+      show('schedule');
+      Schedule.open(p, sch);
+      return;
+    }
     if (m[2]) {
       const s = Store.sketch(p, m[2]);
       if (!s) return go(`#/p/${p.id}`);
-      Store.data.last = { p: p.id, s: s.id }; Store.save();
+      Store.data.last = { p: p.id, s: s.id }; projectTab(p, 'sketches');
       show('sketch');
       Editor.open(p, s);
       enterFullscreen();
@@ -1442,6 +1461,11 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /* ---------- table of contents ---------- */
+function countsText(p) {
+  normProject(p);
+  const n = p.sketches.length, g = p.schedules.length;
+  return `${pad2(n)} ${n === 1 ? 'sketch' : 'sketches'}${g ? ` · ${g} ${g === 1 ? 'schedule' : 'schedules'}` : ''}`;
+}
 function renderToc() {
   const ps = Store.data.projects;
   $('#toc-count').textContent = plural(ps.length, 'project', 'projects');
@@ -1452,7 +1476,7 @@ function renderToc() {
         <span class="e-num">${i + 1}</span>
         <span class="e-body">
           <span class="e-name">${esc(p.name)}</span>
-          <span class="e-meta">${pad2(p.sketches.length)} ${p.sketches.length === 1 ? 'sketch' : 'sketches'} · Updated ${fmtDate(p.updated)}</span>
+          <span class="e-meta">${countsText(p)} · Updated ${fmtDate(p.updated)}</span>
           ${names ? `<span class="e-sketches">${names}</span>` : ''}
         </span>
       </button></li>`;
@@ -1488,7 +1512,7 @@ $('#project-list').addEventListener('click', e => {
 async function addProject() {
   const name = await promptText('New project', '', 'Create');
   if (!name) return;
-  const p = { id: uid(), name, created: now(), updated: now(), sketches: [] };
+  const p = { id: uid(), name, created: now(), updated: now(), sketches: [], schedules: [] };
   Store.data.projects.push(p); Store.save();
   go(`#/p/${p.id}`);
 }
@@ -1527,8 +1551,8 @@ async function projectMenu(p) {
     const ps = Store.data.projects, i = ps.indexOf(p);
     if (i > 0) { ps.splice(i, 1); ps.splice(i - 1, 0, p); Store.save(); }
   } else if (v === 'delete') {
-    if (await confirmBox(`Delete “${p.name}”?`, `This removes the project and its ${plural(p.sketches.length, 'sketch', 'sketches')} from this device. This can't be undone.`)) {
-      Store.data.projects.splice(Store.data.projects.indexOf(p), 1); Store.save();
+    if (await confirmBox(`Delete “${p.name}”?`, `This removes the project, its ${plural(p.sketches.length, 'sketch', 'sketches')} and ${plural(p.schedules.length, 'schedule', 'schedules')} from this device. This can't be undone.`)) {
+      Store.data.projects.splice(Store.data.projects.indexOf(p), 1); if (Store.data.tabs) delete Store.data.tabs[p.id]; Store.save();
       if (currentView !== 'toc') return go('#/');
     }
   }
@@ -1537,11 +1561,32 @@ async function projectMenu(p) {
 
 /* ---------- project ---------- */
 let currentProject = null;
+/** Which section (sketches / schedules) a project page shows; remembered per project. */
+function projectTab(p, set) {
+  const tabs = Store.data.tabs || (Store.data.tabs = {});
+  if (set) { tabs[p.id] = set; Store.save(); }
+  return tabs[p.id] || (p.sketches.length || !p.schedules.length ? 'sketches' : 'schedules');
+}
+function showTab(p) {
+  const tab = projectTab(p);
+  $$('#proj-tabs [data-tab]').forEach(b => { const on = b.dataset.tab === tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+  $('#tab-sketches').hidden = tab !== 'sketches';
+  $('#tab-schedules').hidden = tab !== 'schedules';
+  $('#ct-sketches').textContent = pad2(p.sketches.length);
+  $('#ct-schedules').textContent = pad2(p.schedules.length);
+}
+$('#proj-tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]'); if (!b || !currentProject) return;
+  projectTab(currentProject, b.dataset.tab); showTab(currentProject);
+  if (b.dataset.tab === 'sketches') requestAnimationFrame(() => $$('#sketch-grid [data-thumb]').forEach(c => renderThumb(c, Store.sketch(currentProject, c.dataset.thumb))));
+});
 function renderProject(p) {
+  normProject(p);
   currentProject = p;
+  showTab(p);
   $('#proj-num').textContent = Store.data.projects.indexOf(p) + 1;
   $('#proj-title').textContent = p.name;
-  $('#proj-lede').textContent = `${pad2(p.sketches.length)} ${p.sketches.length === 1 ? 'sketch' : 'sketches'} · Updated ${fmtDate(p.updated)}`;
+  $('#proj-lede').textContent = `${countsText(p)} · Updated ${fmtDate(p.updated)}`;
   $('#proj-count').textContent = `Project ${Store.data.projects.indexOf(p) + 1}`;
   const grid = $('#sketch-grid');
   grid.innerHTML = p.sketches.length ? p.sketches.map(s => `<div class="card">
@@ -1550,7 +1595,42 @@ function renderProject(p) {
       <button type="button" class="more" data-more="${s.id}" aria-label="Options for ${esc(s.name)}"><svg><use href="#i-more"/></svg></button>
     </div>`).join('') : `<div class="empty-note" style="padding-left:0">No sketches yet. Tap New sketch to open a fresh page.</div>`;
   requestAnimationFrame(() => $$('[data-thumb]', grid).forEach(c => renderThumb(c, Store.sketch(p, c.dataset.thumb))));
+  const sg = $('#schedule-grid');
+  sg.innerHTML = p.schedules.length ? p.schedules.map(g => {
+    const cmp = schCompute(g), vals = [...cmp.values()];
+    const span = vals.length ? `${schFmt(g, Math.min(...vals.map(r => r.s)), true)} → ${schFmt(g, Math.max(...vals.map(r => r.e)), true)}` : 'No tasks';
+    return `<div class="card">
+      <button type="button" class="open" data-open-g="${g.id}">${schThumb(g)}</button>
+      <div class="meta"><span class="nm">${esc(g.name)}</span><span class="dt">${span} · ${g.tasks.length} tasks</span></div>
+      <button type="button" class="more" data-more-g="${g.id}" aria-label="Options for ${esc(g.name)}"><svg><use href="#i-more"/></svg></button>
+    </div>`;
+  }).join('') : `<div class="empty-note" style="padding-left:0">No schedules yet. Tap New schedule for a design, permit and construction gantt.</div>`;
 }
+$('#schedule-grid').addEventListener('click', async e => {
+  const p = currentProject; if (!p) return;
+  const o = e.target.closest('[data-open-g]');
+  if (o) return go(`#/p/${p.id}/g/${o.dataset.openG}`);
+  const m = e.target.closest('[data-more-g]');
+  if (!m) return;
+  const g = Store.schedule(p, m.dataset.moreG); if (!g) return;
+  const v = await actionSheet(g.name, [
+    { label: 'Rename', value: 'rename' }, { label: 'Duplicate', value: 'dup' },
+    { label: 'Copy as text for ChatGPT', value: 'copy' }, { label: 'Delete schedule', value: 'delete', danger: true },
+  ]);
+  if (v === 'rename') { const n = await promptText('Rename schedule', g.name); if (n) { g.name = n; g.updated = now(); } }
+  else if (v === 'dup') { const c = JSON.parse(JSON.stringify(g)); c.id = uid(); c.name = g.name + ' copy'; c.created = c.updated = now(); p.schedules.splice(p.schedules.indexOf(g) + 1, 0, c); }
+  else if (v === 'copy') copyOrShow(schText(p, g), 'Copied. Paste it into ChatGPT.');
+  else if (v === 'delete') { if (await confirmBox(`Delete “${g.name}”?`, "This can't be undone.")) { p.schedules.splice(p.schedules.indexOf(g), 1); p.updated = now(); } }
+  Store.save(); renderProject(p);
+});
+$('#add-schedule').onclick = async () => {
+  const p = currentProject; if (!p) return;
+  const name = await promptText('New schedule', p.schedules.length ? `Schedule ${p.schedules.length + 1}` : 'Project schedule', 'Create');
+  if (!name) return;
+  const g = schDefault(name);
+  p.schedules.push(g); p.updated = now(); Store.save();
+  go(`#/p/${p.id}/g/${g.id}`);
+};
 $('#sketch-grid').addEventListener('click', e => {
   const p = currentProject; if (!p) return;
   const o = e.target.closest('[data-open]');
@@ -1574,6 +1654,7 @@ async function sketchMenu(p, s) {
   const v = await actionSheet(s.name, [
     { label: 'Rename', value: 'rename' },
     { label: 'Duplicate', value: 'dup' },
+    { label: 'Export for Rhino (DXF)', value: 'dxf' },
     { label: 'Download PNG', value: 'png' },
     { label: 'Copy as text for ChatGPT', value: 'copy' },
     { label: 'Delete sketch', value: 'delete', danger: true },
@@ -1585,7 +1666,8 @@ async function sketchMenu(p, s) {
   } else if (v === 'png') {
     try { await document.fonts.ready; } catch (_) { }
     downloadBlob(await exportPng(p, s), `${fileSafe(p.name)} - ${fileSafe(s.name)}.png`);
-  } else if (v === 'copy') copyOrShow(sketchText(p, s), 'Copied. Paste it into ChatGPT.');
+  } else if (v === 'dxf') { await exportForRhino(p, s); return; }
+  else if (v === 'copy') copyOrShow(sketchText(p, s), 'Copied. Paste it into ChatGPT.');
   else if (v === 'delete') {
     if (await confirmBox(`Delete “${s.name}”?`, "This can't be undone.")) { p.sketches.splice(p.sketches.indexOf(s), 1); p.updated = now(); }
   }
@@ -1608,6 +1690,7 @@ function restore() {
       let added = 0, replaced = 0;
       for (const p of d.projects) {
         if (!p || !p.id || !Array.isArray(p.sketches)) continue;
+        normProject(p);
         const i = Store.data.projects.findIndex(x => x.id === p.id);
         if (i >= 0) { Store.data.projects[i] = p; replaced++; } else { Store.data.projects.push(p); added++; }
       }
@@ -1691,13 +1774,14 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 /* ================================================================ boot */
 Editor.init();
-(function boot() {
+// Boot once every script (dxf.js, schedule.js) has loaded.
+document.addEventListener('DOMContentLoaded', function boot() {
   // Resume where you left off: the cover flips open onto your last page.
   if (!location.hash || location.hash === '#') {
     const l = Store.data.last, p = l && Store.project(l.p);
-    if (p) history.replaceState(null, '', l.s && Store.sketch(p, l.s) ? `#/p/${l.p}/s/${l.s}` : `#/p/${l.p}`);
+    if (p) history.replaceState(null, '', l.s && Store.sketch(p, l.s) ? `#/p/${l.p}/s/${l.s}` : l.g && Store.schedule(p, l.g) ? `#/p/${l.p}/g/${l.g}` : `#/p/${l.p}`);
     else history.replaceState(null, '', '#/');
   }
   route();
   bindCover($('#cover'), true);
-})();
+});
