@@ -22,7 +22,7 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
   - **Back in plan**: anything drawn above the ground shows lighter.
   - **Measurements**: dimensions and the ChatGPT text use true 3D lengths, with heights as z.
 - **Snap** (G, in the ⋯ menu): line ends land on grid dots and existing endpoints. In ortho mode a line also stops where it lines up with an existing endpoint.
-- **Hand-drawn wiggle**: every straight line has a slight, natural waver (on by default, in the ⋯ menu). It fades out at the ends so corners still meet exactly, and the stored geometry stays precise.
+- **Hand-drafted style**: every line has a slight, natural waver, like a pencil pulled by hand. It fades out at the ends so corners still meet exactly, and the stored geometry stays precise.
 - **Dimensions**: length and angle show live while drawing. **Show dimensions** (D) labels every line in feet and inches, based on the grid spacing. The drawing itself isn't rescaled.
 - **Undo / redo / clear** at the top. Zoom − / % / + and full screen at the bottom (tap the % to fit the drawing), plus a "Saved to notebook" status. Pinch to zoom and two fingers to pan on touch. With an Apple Pencil, one finger pans.
 - **Share with ChatGPT**: the Share button sends a PNG plus a text description (coordinates and lengths in feet) to any app, including ChatGPT. The ✦ button on the Contents page copies a summary of the whole notebook.

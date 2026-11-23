@@ -61,7 +61,7 @@ const STORE_KEY = 'talago-arch-v1';
 const Store = {
   data: null,
   defaults() {
-    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', wiggle: true, ltype: 'solid' } };
+    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', ltype: 'solid' } };
   },
   load() {
     let d = null;
@@ -216,7 +216,7 @@ function lineSeed(a, b) {
 }
 
 /** Straight line, heavier at both ends (the architect's "hit" at start and finish).
- *  With a seed, it gets a slight hand-drawn wiggle that fades out at both ends,
+ *  Every line gets a slight hand-drawn wiggle that fades out at both ends,
  *  so corners still meet exactly. */
 function drawTaper(ctx, ax, ay, bx, by, wEnd, wMid, color, seed, dash) {
   const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy);
@@ -378,7 +378,7 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
       ctx.globalAlpha = (hi ? 0.6 : 1) * fade;
       const a = S(el.a), b = S(el.b);
       const dash = LINE_TYPES[typeOf(el)].dash;
-      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, color, opts.wiggle === false ? null : lineSeed(el.a, el.b), dash && dash.map(v => v * ws));
+      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, color, lineSeed(el.a, el.b), dash && dash.map(v => v * ws));
     }
     ctx.globalAlpha = 1;
   }
@@ -889,7 +889,6 @@ const Editor = {
         break;
       case 'snap': s.snap = !s.snap; break;
       case 'dims': s.dims = !s.dims; break;
-      case 'wiggle': s.wiggle = !s.wiggle; break;
       case 'pen': await penPicker(); if (this.tool === 'erase' || this.tool === 'hand') s.tool = 'line'; break;
       case 'grid': return this.pickGrid();
       case 'undo': return this.undo();
@@ -957,7 +956,6 @@ const Editor = {
     const items = [
       { label: 'Snap to grid', value: 'snap', check: s.snap, hint: 'Line ends land on grid dots (G)' },
       { label: 'Show dimensions', value: 'dims', check: s.dims, hint: 'True length of every line in feet (D)' },
-      { label: 'Hand-drawn wiggle', value: 'wiggle', check: s.wiggle, hint: 'A slight waver in every line, like drawing by hand' },
       { label: this.isAxo ? 'Axonometric options' : 'Axonometric view', value: 'axo', hint: this.isAxo ? 'Angle and rotation' : 'Rotate the drawing into axo (A)' },
       { label: 'Fit drawing to screen', value: 'fit' },
       { label: 'Copy sketch as text for ChatGPT', value: 'copy', hint: 'Line coordinates and lengths in feet' },
@@ -965,7 +963,7 @@ const Editor = {
       { label: 'Rename sketch', value: 'rename' },
     ];
     const v = await actionSheet(this.sketch.name, items);
-    if (v === 'snap' || v === 'dims' || v === 'fit' || v === 'wiggle') this.action(v);
+    if (v === 'snap' || v === 'dims' || v === 'fit') this.action(v);
     else if (v === 'axo') this.isAxo ? this.axoMenu() : this.setMode('axo');
     else if (v === 'copy') this.copyText();
     else if (v === 'png') this.downloadPng();
@@ -1009,7 +1007,7 @@ const Editor = {
     if (!this.sketch || currentView !== 'sketch') return;
     const ctx = this.ctx, { W, H, dpr } = this, s = Store.settings;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover, proj: this.proj, wiggle: s.wiggle });
+    drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover, proj: this.proj });
     this.syncZoom();
     const pw = PEN_WEIGHTS[s.pen], ws = weightScale(this.view.z), ink = INKS[s.color].hex;
     if (this.stroke) {
@@ -1022,7 +1020,7 @@ const Editor = {
       const a = this.toScreen(d.a), b = this.toScreen(d.b);
       ctx.globalAlpha = 0.85 * (pw.alpha || 1);
       const dash = LINE_TYPES[s.ltype] && LINE_TYPES[s.ltype].dash;
-      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, ink, s.wiggle ? lineSeed(d.a, d.b) : null, dash && dash.map(v => v * ws));
+      drawTaper(ctx, a.x, a.y, b.x, b.y, pw.end * ws, pw.mid * ws, ink, lineSeed(d.a, d.b), dash && dash.map(v => v * ws));
       ctx.globalAlpha = 1;
       const ring = (p, on) => { if (!on) return; ctx.strokeStyle = RED; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.stroke(); };
       ring(a, d.snapA); ring(b, d.snapB);
@@ -1053,7 +1051,7 @@ function exportPng(project, sketch, proj = PLAN) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
   const view = { z: zz, ox: W / 2 - (b.x0 + b.x1) / 2 * zz, oy: (H - 1.5 * zz) / 2 - (b.y0 + b.y1) / 2 * zz };
-  drawScene(ctx, W, H, els, view, { dims: Store.settings.dims, gridFt: sketch.gridFt, weightMul: 1.15, proj, wiggle: Store.settings.wiggle });
+  drawScene(ctx, W, H, els, view, { dims: Store.settings.dims, gridFt: sketch.gridFt, weightMul: 1.15, proj });
   ctx.fillStyle = RED; ctx.fillRect(16, H - 40, 26, 26);
   ctx.fillStyle = '#fef9ee'; ctx.font = `15px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('Ta', 29, H - 26.5);
@@ -1133,7 +1131,7 @@ function renderThumb(canvas, sketch) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const view = sketch.lines.length ? fitView(sketch.lines, W, H, 1.5, 22) : { ox: 6, oy: 6, z: 11 };
-  drawScene(ctx, W, H, sketch.lines, view, { weightMul: 0.8, wiggle: Store.settings.wiggle });
+  drawScene(ctx, W, H, sketch.lines, view, { weightMul: 0.8 });
 }
 
 /* ================================================================ views + routing */
