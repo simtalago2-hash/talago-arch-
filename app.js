@@ -233,6 +233,7 @@ function drawFree(ctx, pts, w, color) {
 /** Dot grid on the plan (z = 0), drawn through the current projection. */
 function drawDots(ctx, view, W, H, proj = PLAN) {
   const { ox, oy, z } = view;
+  if (!(z > 0) || !isFinite(z) || !isFinite(ox) || !isFinite(oy)) return;   // never loop on a bad view
   const r = clamp(z * 0.06, 0.8, 1.6);
   ctx.fillStyle = DOT;
   ctx.beginPath();
@@ -249,6 +250,7 @@ function drawDots(ctx, view, W, H, proj = PLAN) {
     const O = proj.P({ x: 0, y: 0 }), ex = proj.P({ x: 1, y: 0 }), ey = proj.P({ x: 0, y: 1 });
     const unit = Math.min(Math.hypot(ex.x - O.x, ex.y - O.y), Math.hypot(ey.x - O.x, ey.y - O.y)) * z;
     let step = 1;
+    if (!(unit > 1e-6) || !isFinite(unit)) return;
     while (step * unit < 11) step *= 2;
     const cs = [[0, 0], [W, 0], [0, H], [W, H]].map(([sx, sy]) => proj.inv((sx - ox) / z, (sy - oy) / z, 0));
     let x0 = Math.min(...cs.map(c => c.x)), x1 = Math.max(...cs.map(c => c.x));
@@ -327,12 +329,16 @@ function bounds(els, proj = PLAN) {
   }
   return { x0, y0, x1, y1 };
 }
-function fitView(els, W, H, pad = 2, maxZ = 60, proj = PLAN) {
+/** Fit the drawing in a W×H area. `chrome` = px reserved for toolbars (editor only). */
+function fitView(els, W, H, pad = 2, maxZ = 60, proj = PLAN, chrome = 0) {
   const b = bounds(els, proj);
   if (!b) return proj.flat ? { ox: (W % BASE_Z) / 2, oy: (H % BASE_Z) / 2, z: BASE_Z } : { ox: W / 2, oy: H / 3, z: BASE_Z };
   const bw = Math.max(b.x1 - b.x0, 1) + pad * 2, bh = Math.max(b.y1 - b.y0, 1) + pad * 2;
-  const z = Math.min(W / bw, (H - 150) / bh, maxZ);
-  return { z, ox: W / 2 - ((b.x0 + b.x1) / 2) * z, oy: H / 2 - 20 - ((b.y0 + b.y1) / 2) * z };
+  const usableH = Math.max(H - chrome, H * 0.5, 1);
+  let z = Math.min(Math.max(W, 1) / bw, usableH / bh, maxZ);
+  if (!(z > 0.05) || !isFinite(z)) z = 0.05;
+  const shift = chrome ? -20 : 0;
+  return { z, ox: W / 2 - ((b.x0 + b.x1) / 2) * z, oy: H / 2 + shift - ((b.y0 + b.y1) / 2) * z };
 }
 
 /* ================================================================ editor */
@@ -408,7 +414,7 @@ const Editor = {
     this.pointers.clear();
     this.resize(true);
     const saved = this.isAxo ? sketch.axoView : sketch.view;
-    this.view = saved && saved.z ? { ...saved } : fitView(sketch.lines, this.W, this.H, 2, 60, this.proj);
+    this.view = saved && saved.z > 0 && isFinite(saved.ox) && isFinite(saved.oy) ? { ...saved } : fitView(sketch.lines, this.W, this.H, 2, 60, this.proj, 150);
     this.setStatus('saved');
     this.syncUI();
     this.render();
@@ -459,7 +465,7 @@ const Editor = {
     const toProj = makeProj(to);
     const saved = mode === 'axo' ? null : this.sketch.view;
     const toView = !refit || (saved && saved.z) ? (saved && saved.z ? { ...saved } : { ...this.view })
-      : fitView(this.sketch.lines, this.W, this.H, 3, 48, toProj);
+      : fitView(this.sketch.lines, this.W, this.H, 3, 48, toProj, 150);
     const v0 = { ...this.view }, t0 = performance.now(), dur = 750;
     const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     const L = (a, b, e) => a + (b - a) * e;
@@ -865,7 +871,7 @@ const Editor = {
   },
 
   fit() {
-    this.view = fitView(this.sketch.lines, this.W, this.H, 3, 48, this.proj);
+    this.view = fitView(this.sketch.lines, this.W, this.H, 3, 48, this.proj, 150);
     this.saveView(); this.render();
   },
 
@@ -897,12 +903,13 @@ const Editor = {
     return exportPng(this.project, this.sketch, this.isAxo ? makeProj(axoParams(this.sketch)) : PLAN);
   },
   async downloadPng() {
-    downloadBlob(await this.renderPng(), `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}${this.isAxo ? ' (axo)' : ''}.png`);
+    let blob; try { blob = await this.renderPng(); } catch (_) { return toast('Could not create the image. Try zooming the drawing smaller.'); }
+    downloadBlob(blob, `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}${this.isAxo ? ' (axo)' : ''}.png`);
   },
   async copyText() { await copyOrShow(sketchText(this.project, this.sketch), 'Copied. Paste it into ChatGPT.'); },
   async share() {
     this.flush();
-    const blob = await this.renderPng();
+    let blob; try { blob = await this.renderPng(); } catch (_) { return toast('Could not create the image. Try Copy as text instead.'); }
     const name = `${fileSafe(this.project.name)} - ${fileSafe(this.sketch.name)}${this.isAxo ? ' (axo)' : ''}.png`;
     const file = new File([blob], name, { type: 'image/png' });
     const text = sketchText(this.project, this.sketch);
@@ -960,7 +967,8 @@ function exportPng(project, sketch, proj = PLAN) {
   const els = sketch.lines, z = 40, pad = 2.5;
   const b = bounds(els, proj) || { x0: 0, y0: 0, x1: 16, y1: 12 };
   const wU = b.x1 - b.x0 + pad * 2, hU = b.y1 - b.y0 + pad * 2 + 1.5;
-  const zz = z * Math.min(1, 4096 / (wU * z), 4096 / (hU * z));
+  // Stay well inside iPhone Safari's canvas memory limit (~16.7M pixels).
+  const zz = z * Math.min(1, 2800 / (wU * z), 2800 / (hU * z));
   const W = Math.max(480, Math.round(wU * zz)), H = Math.max(360, Math.round(hU * zz));
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -973,7 +981,7 @@ function exportPng(project, sketch, proj = PLAN) {
   ctx.textAlign = 'left'; ctx.fillStyle = MUTED; ctx.font = `14px ${SANS}`;
   const viewName = proj.flat ? 'plan' : `axo ${(AXO_TYPES[sketch.axo && sketch.axo.type] || AXO_TYPES['45']).name}`;
   ctx.fillText(`${project.name}  ·  ${sketch.name}  ·  ${viewName}  ·  grid ${fmtFeet(sketch.gridFt)}`, 52, H - 26.5);
-  return new Promise(res => c.toBlob(res, 'image/png'));
+  return new Promise((res, rej) => c.toBlob(bl => bl ? res(bl) : rej(new Error('PNG export failed')), 'image/png'));
 }
 
 function sketchText(project, sketch) {
