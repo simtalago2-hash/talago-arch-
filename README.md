@@ -29,6 +29,10 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
 - **Landscape**: on a phone turned sideways, the toolbar moves to a vertical strip on the right so the page stays clear.
 - **Undo / redo / clear** at the top. Zoom − / % / + and full screen at the bottom (tap the % to fit the drawing), plus a "Saved to notebook" status. Pinch to zoom and two fingers to pan on touch. With an Apple Pencil, one finger pans.
 - **Share with ChatGPT**: the Share button sends a PNG plus a text description (coordinates and lengths, unitless) to any app, including ChatGPT. The ✦ button on the Contents page copies a summary of the whole notebook.
+- **Export for Rhino (DXF)** (⋯ menu, or a sketch's ⋯ on the project page): choose what one grid unit means (inches, feet, millimetres, centimetres, metres or unitless) and the file opens in Rhino at true size.
+  - **What comes across**: straight lines become line curves with true 3D heights; pencil strokes become smooth NURBS curves; hatches become real, editable hatches with their patterns and spacing.
+  - **Layers and linetypes**: Ching's weights become layers (TA Major 0.50 mm, TA Secondary 0.25 mm, TA Layout 0.13 mm) and line types become linetypes (dashed, hidden, center).
+  - **3D model or axo drawing**: export the true 3D model, or, when you have an axo, a flat axo drawing as shown, including face hatching.
 - **Back up / restore** the notebook as a file (✦ menu).
 - **Works offline** and installs to your home screen as an app.
 
@@ -63,6 +67,7 @@ python3 -m http.server 8000
 | `index.html` | App shell: cover, contents, project and sketch views |
 | `styles.css` | Look and layout (Helvetica Neue on Apple devices, bundled Inter elsewhere) |
 | `app.js` | Storage, navigation, drawing engine, export/share |
+| `dxf.js` | DXF export for Rhino (curves, hatches, layers, linetypes, units) |
 | `sw.js` | Offline cache + update handling |
 | `manifest.webmanifest`, `icons/` | Home-screen install and the red "Ta" icon |
 | `.github/workflows/pages.yml` | Deploys to GitHub Pages |

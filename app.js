@@ -759,9 +759,10 @@ const Editor = {
   hatchCorner(pos) {
     const ep = this.nearestEndpoint(pos);
     if (ep) { const s = this.toScreen(this.isAxo ? ep : { x: ep.x, y: ep.y }); return this.toHatch(s.x, s.y); }
-    const st = this.snapStep(), w = this.toPlane(pos.x, pos.y, 0), g = { x: roundTo(w.x, st), y: roundTo(w.y, st) };
-    if (!this.isAxo) return g;
-    const s = this.toScreen(g); return this.toHatch(s.x, s.y);
+    // In axo the dot grid lies on the ground, which says nothing about walls: only corners snap there.
+    if (this.isAxo) return this.toHatch(pos.x, pos.y);
+    const st = this.snapStep(), w = this.toPlane(pos.x, pos.y, 0);
+    return { x: roundTo(w.x, st), y: roundTo(w.y, st) };
   },
   /** The hatch outline from a freehand loop. With Snap on, the loop is straightened between
    *  corners and the corners land on grid dots or existing line ends. */
@@ -780,7 +781,9 @@ const Editor = {
       changed = false;
       for (let i = 0; i < poly.length; i++) {
         const p = poly[(i + poly.length - 1) % poly.length], q = poly[i], r = poly[(i + 1) % poly.length];
-        if (Math.abs((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)) < 1e-6) { poly.splice(i, 1); changed = true; break; }
+        const len = Math.hypot(r.x - p.x, r.y - p.y) || 1e-9;
+        const off = Math.abs((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)) / len;   // distance of q from line p–r
+        if (off < 2 / this.view.z) { poly.splice(i, 1); changed = true; break; }
       }
     }
     return poly;
@@ -1208,6 +1211,7 @@ const Editor = {
       { label: this.isAxo ? 'Axonometric options' : 'Axonometric view', value: 'axo', hint: this.isAxo ? 'Angle and rotation' : 'Rotate the drawing into axo (A)' },
       { label: 'Fit drawing to screen', value: 'fit' },
       { label: 'Copy sketch as text for ChatGPT', value: 'copy', hint: 'Line coordinates and lengths' },
+      { label: 'Export for Rhino (DXF)', value: 'dxf', hint: 'Curves, hatches, layers; choose units' },
       { label: 'Download PNG', value: 'png', hint: this.isAxo ? 'Saves the axo view' : 'Saves the plan view' },
       { label: 'Rename sketch', value: 'rename' },
     ];
@@ -1215,6 +1219,7 @@ const Editor = {
     if (v === 'snap' || v === 'dims' || v === 'fit') this.action(v);
     else if (v === 'axo') this.isAxo ? this.axoMenu() : this.setMode('axo');
     else if (v === 'copy') this.copyText();
+    else if (v === 'dxf') { this.flush(); exportForRhino(this.project, this.sketch); }
     else if (v === 'png') this.downloadPng();
     else if (v === 'rename') {
       const n = await promptText('Rename sketch', this.sketch.name);
@@ -1576,6 +1581,7 @@ async function sketchMenu(p, s) {
   const v = await actionSheet(s.name, [
     { label: 'Rename', value: 'rename' },
     { label: 'Duplicate', value: 'dup' },
+    { label: 'Export for Rhino (DXF)', value: 'dxf' },
     { label: 'Download PNG', value: 'png' },
     { label: 'Copy as text for ChatGPT', value: 'copy' },
     { label: 'Delete sketch', value: 'delete', danger: true },
@@ -1587,7 +1593,8 @@ async function sketchMenu(p, s) {
   } else if (v === 'png') {
     try { await document.fonts.ready; } catch (_) { }
     downloadBlob(await exportPng(p, s), `${fileSafe(p.name)} - ${fileSafe(s.name)}.png`);
-  } else if (v === 'copy') copyOrShow(sketchText(p, s), 'Copied. Paste it into ChatGPT.');
+  } else if (v === 'dxf') { await exportForRhino(p, s); return; }
+  else if (v === 'copy') copyOrShow(sketchText(p, s), 'Copied. Paste it into ChatGPT.');
   else if (v === 'delete') {
     if (await confirmBox(`Delete “${s.name}”?`, "This can't be undone.")) { p.sketches.splice(p.sketches.indexOf(s), 1); p.updated = now(); }
   }
