@@ -13,7 +13,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const now = () => Date.now();
 const pad2 = n => String(n).padStart(2, '0');
 
-const GRID_OPTIONS = []; // 1' to 20' in 1/2' increments
+const GRID_OPTIONS = []; // 1 to 20 in 0.5 steps (unitless)
 for (let v = 1; v <= 20; v += 0.5) GRID_OPTIONS.push(v);
 
 // Line weights after Ching: index 0 = grid/layout, 1 = secondary, 2 = major/primary.
@@ -49,11 +49,12 @@ const isFree = el => el.t === 'f';
 const isHatch = el => el.t === 'h';
 const isLine = el => !el.t;
 
-function fmtFeet(ft) {
-  const inches = Math.round(Math.abs(ft) * 12);
-  return `${Math.floor(inches / 12)}'-${inches % 12}"`;
+/** Unitless number: up to two decimals, no trailing zeros (3.5 could be inches or feet). */
+function fmtLen(v) {
+  const r = Math.round(Math.abs(v) * 100) / 100;
+  return String(+r.toFixed(2));
 }
-function fmtGrid(v) { return v % 1 ? `${Math.floor(v)}½'` : `${v}'`; }
+const fmtGrid = v => fmtLen(v);
 function fmtDate(t) { return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
 function fileSafe(s) { return String(s).replace(/[\\/:*?"<>|]+/g, '-').trim() || 'sketch'; }
 function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
@@ -143,7 +144,7 @@ function actionSheet(title, actions) {
 }
 function gridPicker(current) {
   return Modal.open(`<h2>Grid spacing</h2>
-    <p>What one dot-to-dot space represents. The drawing isn't rescaled; this just lets you dimension from grid to grid.</p>
+    <p>What one dot-to-dot space represents, in whatever unit you have in mind (inches, feet…). The drawing isn't rescaled; this just lets you dimension from grid to grid.</p>
     <div class="opts">${GRID_OPTIONS.map(v => `<button type="button" data-v="${v}" class="${v === current ? 'on' : ''}">${fmtGrid(v)}</button>`).join('')}</div>
     <div class="btns" style="margin-top:18px"><button type="button" class="btn" data-x>Cancel</button></div>`,
     (c, done) => {
@@ -518,7 +519,7 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
       if (!isLine(el)) continue;
       const a = S(el.a), b = S(el.b);
       if (Math.hypot(b.x - a.x, b.y - a.y) < 28) continue;
-      drawDim(ctx, a.x, a.y, b.x, b.y, fmtFeet(len3(el.a, el.b) * opts.gridFt), MUTED);
+      drawDim(ctx, a.x, a.y, b.x, b.y, fmtLen(len3(el.a, el.b) * opts.gridFt), MUTED);
     }
   }
 }
@@ -1156,7 +1157,7 @@ const Editor = {
     if (v == null) return;
     this.sketch.gridFt = v;
     this.touch(); this.render();
-    toast(`Grid set to ${fmtFeet(v)} per dot`);
+    toast(`Grid set to ${fmtLen(v)} per dot`);
   },
   async clear() {
     if (!this.sketch.lines.length) return;
@@ -1203,10 +1204,10 @@ const Editor = {
     const s = Store.settings;
     const items = [
       { label: 'Snap to grid', value: 'snap', check: s.snap, hint: 'Line ends land on grid dots (G)' },
-      { label: 'Show dimensions', value: 'dims', check: s.dims, hint: 'True length of every line in feet (D)' },
+      { label: 'Show dimensions', value: 'dims', check: s.dims, hint: 'True length of every line, in grid units (D)' },
       { label: this.isAxo ? 'Axonometric options' : 'Axonometric view', value: 'axo', hint: this.isAxo ? 'Angle and rotation' : 'Rotate the drawing into axo (A)' },
       { label: 'Fit drawing to screen', value: 'fit' },
-      { label: 'Copy sketch as text for ChatGPT', value: 'copy', hint: 'Line coordinates and lengths in feet' },
+      { label: 'Copy sketch as text for ChatGPT', value: 'copy', hint: 'Line coordinates and lengths' },
       { label: 'Download PNG', value: 'png', hint: this.isAxo ? 'Saves the axo view' : 'Saves the plan view' },
       { label: 'Rename sketch', value: 'rename' },
     ];
@@ -1297,7 +1298,7 @@ const Editor = {
           if (ang < 0) ang += 360;
           tag = `${ang}°`;
         }
-        drawDim(ctx, a.x, a.y, b.x, b.y, `${fmtFeet(len * this.sketch.gridFt)}   ${tag}`, RED, 17);
+        drawDim(ctx, a.x, a.y, b.x, b.y, `${fmtLen(len * this.sketch.gridFt)}   ${tag}`, RED, 17);
       }
     }
   },
@@ -1321,7 +1322,7 @@ function exportPng(project, sketch, proj = PLAN) {
   ctx.fillText('Ta', 29, H - 26.5);
   ctx.textAlign = 'left'; ctx.fillStyle = MUTED; ctx.font = `14px ${SANS}`;
   const viewName = proj.flat ? 'plan' : `axo ${(AXO_TYPES[sketch.axo && sketch.axo.type] || AXO_TYPES['45']).name}`;
-  ctx.fillText(`${project.name}  ·  ${sketch.name}  ·  ${viewName}  ·  grid ${fmtFeet(sketch.gridFt)}`, 52, H - 26.5);
+  ctx.fillText(`${project.name}  ·  ${sketch.name}  ·  ${viewName}  ·  grid ${fmtLen(sketch.gridFt)}`, 52, H - 26.5);
   return new Promise((res, rej) => c.toBlob(bl => bl ? res(bl) : rej(new Error('PNG export failed')), 'image/png'));
 }
 
@@ -1334,9 +1335,10 @@ function sketchText(project, sketch) {
     'Talago Arch sketch',
     `Project: ${project.name}`,
     `Sketch: ${sketch.name}`,
-    `Grid spacing: ${fmtFeet(g)} between dots`,
-    has3d ? 'Coordinates (x, y, z) in feet: x to the right and y downward on the plan, z = height above the plan.'
-      : 'Coordinates in feet, origin top-left, x to the right, y downward.',
+    `Grid spacing: ${fmtLen(g)} between dots`,
+    'Units are unspecified (the drafter decides whether they mean inches, feet, metres…).',
+    has3d ? 'Coordinates (x, y, z): x to the right and y downward on the plan, z = height above the plan.'
+      : 'Coordinates: origin top-left, x to the right, y downward.',
     'Line weights and types follow Ching: major/primary = cuts and profiles, secondary = elevations and corners, grid/layout = construction; dashed above cut = overhead, dashed below cut = hidden.',
     `Straight lines (${lines.length}):`,
   ];
@@ -1349,7 +1351,7 @@ function sketchText(project, sketch) {
       desc = `plan angle ${ang}°${dz ? ', sloped' : ''}`;
     }
     const wt = (PEN_WEIGHTS[l.w] || PEN_WEIGHTS[1]).full.toLowerCase(), ty = LINE_TYPES[typeOf(l)].name.toLowerCase();
-    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtFeet(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
+    out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtLen(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
   });
   if (hatches.length) {
     out.push(`Hatched areas (${hatches.length}):`);
@@ -1375,7 +1377,7 @@ function notebookText() {
   const out = ['Talago Arch notebook', `${plural(ps.length, 'project', 'projects')}`, ''];
   ps.forEach((p, i) => {
     out.push(`${pad2(i + 1)}. ${p.name} (${plural(p.sketches.length, 'sketch', 'sketches')})`);
-    p.sketches.forEach(s => out.push(`    - ${s.name}: ${plural(s.lines.length, 'element', 'elements')}, grid ${fmtFeet(s.gridFt)}, updated ${fmtDate(s.updated)}`));
+    p.sketches.forEach(s => out.push(`    - ${s.name}: ${plural(s.lines.length, 'element', 'elements')}, grid ${fmtLen(s.gridFt)}, updated ${fmtDate(s.updated)}`));
   });
   return out.join('\n');
 }
