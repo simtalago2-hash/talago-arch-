@@ -24,6 +24,7 @@ const DXF_LAYERS = [   // index matches PEN_WEIGHTS: 0 layout, 1 secondary, 2 ma
 ];
 const DXF_LAYER_PENCIL = { name: 'TA Pencil', lw: 18, color: 7 };
 const DXF_LAYER_HATCH = { name: 'TA Hatch', lw: 9, color: 7 };
+const DXF_LAYER_ANNOT = { name: 'TA Annotation', lw: 18, color: 7 };
 const DXF_INK_ACI = [7, 1, 5, 8];   // ink, red, blue, graphite
 // App dash patterns are in px at BASE_Z px per grid unit.
 const DXF_LTYPES = { above: { name: 'TA_DASHED', desc: 'Dashed (above cut) __ __ __' }, below: { name: 'TA_HIDDEN', desc: 'Hidden (below cut) _ _ _ _' }, center: { name: 'TA_CENTER', desc: 'Center ____ _ ____ _' } };
@@ -54,7 +55,7 @@ function buildDXF(project, sketch, opts) {
   const hDictRoot = H(), hDictGroup = H();
   const usedTypes = new Set(sketch.lines.filter(isLine).map(typeOf).filter(t => t !== 'solid'));
   const ltypeHandles = {}; for (const t of usedTypes) ltypeHandles[t] = H();
-  const layers = [{ name: '0', lw: -3, color: 7 }, ...DXF_LAYERS, DXF_LAYER_PENCIL, DXF_LAYER_HATCH].map(l => ({ ...l, h: H() }));
+  const layers = [{ name: '0', lw: -3, color: 7 }, ...DXF_LAYERS, DXF_LAYER_PENCIL, DXF_LAYER_HATCH, DXF_LAYER_ANNOT].map(l => ({ ...l, h: H() }));
 
   // ---- entities (built first so $HANDSEED is right)
   const ents = [];
@@ -96,7 +97,7 @@ function buildDXF(project, sketch, opts) {
   }
 
   for (const el of sketch.lines) {
-    if (isHatch(el)) continue;
+    if (isHatch(el) || isAnnot(el)) continue;
     const color = DXF_INK_ACI[el.c] || 7;
     if (isLine(el)) {
       const L = DXF_LAYERS[el.w] || DXF_LAYERS[1], t = typeOf(el);
@@ -119,6 +120,51 @@ function buildDXF(project, sketch, opts) {
       E(42, 1e-10); E(43, 1e-10);
       for (const k of knots) E(40, k);
       for (const c of cps) { E(10, c[0]); E(20, c[1]); E(30, c[2]); }
+    }
+  }
+
+  // ---- annotations (dimensions + notes) as lines and text
+  const ann = DXF_LAYER_ANNOT.name;
+  const line2 = (p, q, color) => { head('LINE', ann, { color }); E(100, 'AcDbLine'); E(10, p[0]); E(20, p[1]); E(30, p[2] || 0); E(11, q[0]); E(21, q[1]); E(31, q[2] || 0); };
+  const text = (p, h, str, rot, color, center) => {
+    head('TEXT', ann, { color }); E(100, 'AcDbText');
+    E(10, p[0]); E(20, p[1]); E(30, p[2] || 0); E(40, h); E(1, String(str).toUpperCase()); E(50, rot || 0); E(7, 'Standard');
+    if (center) { E(72, 1); E(11, p[0]); E(21, p[1]); E(31, p[2] || 0); }
+    E(100, 'AcDbText');
+  };
+  const visible = el => flat ? el.view === key : !el.view;
+  for (const el of sketch.lines) {
+    if (!isAnnot(el) || !visible(el)) continue;
+    const color = DXF_INK_ACI[el.c] || 7;
+    if (isDim(el)) {
+      const A = P3(el.a), B = P3(el.b);
+      let dx = B[0] - A[0], dy = B[1] - A[1];
+      const L = Math.hypot(dx, dy); if (L < 1e-9) continue;
+      dx /= L; dy /= L;
+      const nx = -dy, ny = dx, off = (el.off == null ? 1.25 : el.off) * g, sg = Math.sign(off) || 1;   // left normal in y-up = the side shown on screen
+      const A2 = [A[0] + nx * off, A[1] + ny * off, A[2]], B2 = [B[0] + nx * off, B[1] + ny * off, B[2]];
+      const gap = 0.15 * g * sg, over = 0.2 * g * sg, ext = 0.2 * g;
+      line2([A[0] + nx * gap, A[1] + ny * gap, A[2]], [A2[0] + nx * over, A2[1] + ny * over, A2[2]], color);
+      line2([B[0] + nx * gap, B[1] + ny * gap, B[2]], [B2[0] + nx * over, B2[1] + ny * over, B2[2]], color);
+      line2([A2[0] - dx * ext, A2[1] - dy * ext, A2[2]], [B2[0] + dx * ext, B2[1] + dy * ext, B2[2]], color);
+      const tx = (dx + nx) / Math.SQRT2, ty = (dy + ny) / Math.SQRT2, tl = 0.25 * g;
+      for (const Q of [A2, B2]) line2([Q[0] - tx * tl, Q[1] - ty * tl, Q[2]], [Q[0] + tx * tl, Q[1] + ty * tl, Q[2]], color);
+      let rot = Math.atan2(dy, dx) * 180 / Math.PI; if (rot > 90 || rot <= -90) rot += 180;
+      const th = 0.45 * g, mid = [(A2[0] + B2[0]) / 2 + nx * sg * th * 0.9, (A2[1] + B2[1]) / 2 + ny * sg * th * 0.9, A2[2]];
+      text(mid, th, el.label || fmtLen(len3(el.a, el.b) * g), rot, color, true);
+    } else {
+      const toOut = p => el.view ? Ppage(p) : P3({ x: p.x, y: p.y, z: 0 });
+      const P = toOut(el.at), h = (NOTE_SIZES[el.s] || NOTE_SIZES[1]).u * g, lh = h * 1.3;
+      const lines = String(el.text || '').split('\n');
+      lines.forEach((l, i) => text([P[0], P[1] - h - i * lh, 0], h, l, 0, color, false));
+      if (el.lead) {
+        const Tg = toOut(el.lead), w = Math.max(...lines.map(l => l.length)) * h * 0.62;
+        const left = Tg[0] < P[0] + w / 2, ax = left ? P[0] - h * 0.35 : P[0] + w + h * 0.35, ay = P[1] - lh * 0.5, sx = left ? ax - h * 0.8 : ax + h * 0.8;
+        line2([ax, ay, 0], [sx, ay, 0], color); line2([sx, ay, 0], Tg, color);
+        const vx = Tg[0] - sx, vy = Tg[1] - ay, vl = Math.hypot(vx, vy) || 1, ux = vx / vl, uy = vy / vl, al = h * 0.7;
+        line2(Tg, [Tg[0] - ux * al - uy * al * 0.32, Tg[1] - uy * al + ux * al * 0.32, 0], color);
+        line2(Tg, [Tg[0] - ux * al + uy * al * 0.32, Tg[1] - uy * al - ux * al * 0.32, 0], color);
+      }
     }
   }
 
@@ -222,7 +268,7 @@ function buildDXF(project, sketch, opts) {
 /** Export dialog: units + what to export, then share/download the .dxf. */
 async function exportForRhino(project, sketch) {
   const s = Store.settings;
-  const hasAxo = sketch.mode === 'axo' || sketch.lines.some(el => isHatch(el) && el.view);
+  const hasAxo = sketch.mode === 'axo' || sketch.lines.some(el => (isHatch(el) || isAnnot(el)) && el.view);
   let units = s.dxfUnits || 'ft', mode = (Editor.sketch === sketch && Editor.isAxo) ? 'axo' : 'model';
   const ok = await Modal.open(`<h2>Export for Rhino</h2>
     <p>Saves a DXF file. Lines become curves, pencil strokes become smooth curves, hatches stay hatches, and Ching's weights and line types become layers and linetypes.</p>

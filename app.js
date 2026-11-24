@@ -46,11 +46,16 @@ const PAPER = '#fcfcf8';
 const DOT = '#b9bab5';
 const MUTED = '#73756d';
 const SANS = `'Helvetica Neue', Helvetica, Inter, Arial, sans-serif`;
+// Hand-lettered drafting font for notes and dimensions (always capitals).
+const LETTER = `'Architects Daughter', 'Marker Felt', 'Comic Sans MS', cursive`;
 
 const inkOf = el => (INKS[el.c] || INKS[0]).hex;
 const isFree = el => el.t === 'f';
 const isHatch = el => el.t === 'h';
 const isLine = el => !el.t;
+const isDim = el => el.t === 'd';
+const isNote = el => el.t === 'n';
+const isAnnot = el => el.t === 'd' || el.t === 'n';
 
 /** Unitless number: up to two decimals, no trailing zeros (3.5 could be inches or feet). */
 function fmtLen(v) {
@@ -68,7 +73,7 @@ function normProject(p) { if (!Array.isArray(p.sketches)) p.sketches = []; if (!
 const Store = {
   data: null,
   defaults() {
-    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', ltype: 'solid', hatch: 'x', hval: 1 } };
+    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', ltype: 'solid', hatch: 'x', hval: 1, annot: 'dim', noteSize: 1 } };
   },
   load() {
     let d = null;
@@ -207,7 +212,7 @@ const r3 = v => Math.round(v * 1000) / 1000;
 /** Compact stored point: z only when off the plan. */
 function pt(p) { const o = { x: r3(p.x), y: r3(p.y) }; if (p.z) o.z = r3(p.z); return o; }
 const len3 = (a, b) => Math.hypot(b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0));
-const elevated = el => isHatch(el) ? false : isFree(el) ? el.pts.some(p => p.z) : !!(el.a.z || el.b.z);
+const elevated = el => (isHatch(el) || isAnnot(el)) ? false : isFree(el) ? el.pts.some(p => p.z) : !!(el.a.z || el.b.z);
 
 /* ================================================================ drawing primitives */
 function weightScale(z) { return Math.sqrt(z / BASE_Z); }
@@ -474,7 +479,8 @@ function drawDim(ctx, ax, ay, bx, by, label, color, offset = 12) {
   ctx.save();
   ctx.translate((ax + bx) / 2 + nx * offset, (ay + by) / 2 + ny * offset);
   ctx.rotate(a);
-  ctx.font = `500 12.5px ${SANS}`;
+  ctx.font = `13.5px ${LETTER}`;
+  label = String(label).toUpperCase();
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   const w = ctx.measureText(label).width;
   ctx.fillStyle = 'rgba(252,252,248,.9)';
@@ -482,6 +488,72 @@ function drawDim(ctx, ax, ay, bx, by, label, color, offset = 12) {
   ctx.fillStyle = color;
   ctx.fillText(label, 0, 0.5);
   ctx.restore();
+}
+
+/* ---------- annotations: architectural dimensions and blueprint notes ---------- */
+const NOTE_SIZES = [{ name: 'Small', u: 0.45 }, { name: 'Medium', u: 0.62 }, { name: 'Large', u: 0.9 }];
+/** Dimension geometry on screen: points A, B; perpendicular n; offset dimension line A2–B2. */
+function dimGeom(A, B, offPx) {
+  const dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L, nx = uy, ny = -ux;          // n points "up" for a left→right dimension
+  return { A, B, ux, uy, nx, ny, L, A2: { x: A.x + nx * offPx, y: A.y + ny * offPx }, B2: { x: B.x + nx * offPx, y: B.y + ny * offPx } };
+}
+function drawDimension(ctx, el, S, z, ws, gridFt, color) {
+  const A = S(el.a), B = S(el.b), offPx = (el.off == null ? 1.2 : el.off) * z;
+  const g = dimGeom(A, B, offPx);
+  if (g.L < 4) return;
+  const sgn = Math.sign(offPx) || 1, gap = 3 * sgn, over = 4 * sgn, ext = 4;
+  const thin = [1.25 * ws, 0.7 * ws], seed = lineSeed(el.a, el.b) + 17;
+  // extension lines (small gap at the object, run a little past the dimension line)
+  drawTaper(ctx, A.x + g.nx * gap, A.y + g.ny * gap, g.A2.x + g.nx * over, g.A2.y + g.ny * over, thin[0], thin[1], color, seed);
+  drawTaper(ctx, B.x + g.nx * gap, B.y + g.ny * gap, g.B2.x + g.nx * over, g.B2.y + g.ny * over, thin[0], thin[1], color, seed + 1);
+  // dimension line, overshooting the extension lines slightly
+  drawTaper(ctx, g.A2.x - g.ux * ext, g.A2.y - g.uy * ext, g.B2.x + g.ux * ext, g.B2.y + g.uy * ext, thin[0] * 1.1, thin[1], color, seed + 2);
+  // architectural 45° ticks
+  const tx = (g.ux + g.nx) / Math.SQRT2, ty = (g.uy + g.ny) / Math.SQRT2, tl = 5.5 * Math.max(ws, 0.8);
+  for (const P of [g.A2, g.B2]) drawTaper(ctx, P.x - tx * tl, P.y - ty * tl, P.x + tx * tl, P.y + ty * tl, 2.6 * ws, 1.7 * ws, color);
+  // value, written above the dimension line
+  const fs = clamp(0.62 * z, 11, 24);
+  if (fs < 6) return;
+  let ang = Math.atan2(g.uy, g.ux), flip = false;
+  if (ang > Math.PI / 2 || ang <= -Math.PI / 2) { ang += Math.PI; flip = true; }
+  const side = (flip ? -1 : 1);   // keep the text on the far side of the line from the object
+  const mx = (g.A2.x + g.B2.x) / 2, my = (g.A2.y + g.B2.y) / 2;
+  ctx.save();
+  ctx.translate(mx + g.nx * sgn * (fs * 0.75), my + g.ny * sgn * (fs * 0.75));
+  ctx.rotate(ang);
+  ctx.font = `${fs}px ${LETTER}`; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  void side;
+  ctx.fillText(el.label ? String(el.label).toUpperCase() : fmtLen(len3(el.a, el.b) * (gridFt || 1)), 0, 0);
+  ctx.restore();
+}
+/** Note text (capitals, blueprint lettering) with an optional leader + arrowhead. Returns its screen box. */
+function drawNote(ctx, el, S, z, ws, color) {
+  const fs = clamp((NOTE_SIZES[el.s] || NOTE_SIZES[1]).u * z, 7, 46);
+  const lines = String(el.text || '').toUpperCase().split('\n');
+  const P = S(el.at);
+  ctx.font = `${fs}px ${LETTER}`;
+  const lh = fs * 1.3, w = Math.max(...lines.map(l => ctx.measureText(l).width), fs), h = lh * lines.length;
+  const box = { x: P.x, y: P.y, w, h };
+  if (el.lead) {
+    const T = S(el.lead);
+    const left = T.x < P.x + w / 2;
+    const ax = left ? P.x - fs * 0.35 : P.x + w + fs * 0.35, ay = P.y + lh * 0.5;
+    const sx = left ? ax - fs * 0.8 : ax + fs * 0.8;          // short horizontal shoulder at the text
+    drawTaper(ctx, ax, ay, sx, ay, 1.3 * ws, 0.8 * ws, color);
+    drawTaper(ctx, sx, ay, T.x, T.y, 1.3 * ws, 0.8 * ws, color, lineSeed(el.at, el.lead));
+    const dx = T.x - sx, dy = T.y - ay, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L, al = clamp(fs * 0.7, 6, 14);
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.moveTo(T.x, T.y);
+    ctx.lineTo(T.x - ux * al - uy * al * 0.32, T.y - uy * al + ux * al * 0.32);
+    ctx.lineTo(T.x - ux * al + uy * al * 0.32, T.y - uy * al - ux * al * 0.32);
+    ctx.closePath(); ctx.fill();
+  }
+  if (fs >= 5) {
+    ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    lines.forEach((l, i) => ctx.fillText(l, P.x, P.y + i * lh + fs * 0.08));
+  }
+  return box;
 }
 
 /** Render a full scene. view = {ox, oy, z}; opts.proj = projection (plan by default). */
@@ -503,7 +575,7 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
     ctx.globalAlpha = 1;
   }
   for (const el of els) {
-    if (isHatch(el)) continue;
+    if (isHatch(el) || isAnnot(el)) continue;
     const pw = PEN_WEIGHTS[el.w] || PEN_WEIGHTS[1];
     const hi = el === opts.highlight;
     const color = hi ? RED : inkOf(el);
@@ -520,6 +592,15 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
     }
     ctx.globalAlpha = 1;
   }
+  // Dimensions and notes belong to the view they were drawn in (plan, or one axo view).
+  for (const el of els) {
+    if (!isAnnot(el)) continue;
+    if (el.view ? el.view !== opts.axoKey : !proj.flat) continue;
+    const color = el === opts.highlight ? RED : inkOf(el);
+    const Sx = isNote(el) && el.view ? Spage : S;
+    if (isDim(el)) drawDimension(ctx, el, S, z, ws, opts.gridFt, color);
+    else { const box = drawNote(ctx, el, Sx, z, ws, color); if (opts.boxes) opts.boxes.set(el, box); }
+  }
   if (opts.dims && opts.gridFt) {
     for (const el of els) {
       if (!isLine(el)) continue;
@@ -531,7 +612,12 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
 }
 
 // Hatches drawn in axo live in that view's page space, so they don't count toward plan/3D bounds.
-function elPoints(el) { return isHatch(el) ? (el.view ? [] : el.pts) : isFree(el) ? el.pts : [el.a, el.b]; }
+function elPoints(el) {
+  if (isHatch(el)) return el.view ? [] : el.pts;
+  if (isDim(el)) return el.view ? [] : [el.a, el.b];
+  if (isNote(el)) return el.view ? [] : [el.at, ...(el.lead ? [el.lead] : [])];
+  return isFree(el) ? el.pts : [el.a, el.b];
+}
 /** Bounds of the drawing on the page under a projection. */
 function bounds(els, proj = PLAN) {
   if (!els.length) return null;
@@ -565,6 +651,7 @@ const Editor = {
   W: 0, H: 0, dpr: 1,
   project: null, sketch: null,
   view: { ox: 0, oy: 0, z: BASE_Z },
+  noteBoxes: new WeakMap(),
   mode: 'plan',                 // 'plan' | 'axo'
   proj: PLAN,
   anim: null,
@@ -611,6 +698,8 @@ const Editor = {
     $('#sk-menu').onclick = () => this.menu();
     document.addEventListener('keydown', e => this.onKey(e));
     document.addEventListener('keyup', e => { if (e.code === 'Space') this.spaceDown = false; });
+    // Redraw once the blueprint lettering font is ready, so notes never flash in a fallback font.
+    try { document.fonts.load(`20px 'Architects Daughter'`).then(() => this.render()); } catch (_) { }
     const fsOk = document.fullscreenEnabled || document.webkitFullscreenEnabled;
     $('#fs-btn').hidden = !fsOk;
   },
@@ -623,7 +712,7 @@ const Editor = {
     this.mode = sketch.mode === 'axo' ? 'axo' : 'plan';
     this.proj = this.isAxo ? makeProj(axoParams(sketch)) : PLAN;
     this.undoStack = []; this.redoStack = [];
-    this.drawing = this.stroke = this.lasso = this.erasing = this.gesture = this.panning = null;
+    this.drawing = this.stroke = this.lasso = this.annot = this.erasing = this.gesture = this.panning = null;
     this.pointers.clear();
     this.resize(true);
     const saved = this.isAxo ? sketch.axoView : sketch.view;
@@ -703,6 +792,66 @@ const Editor = {
     const v = fitView(this.sketch.lines, this.W, this.H, 3, has3d ? 48 : BASE_Z * 1.25, proj, has3d ? 150 : 260);
     if (!has3d) v.oy += Math.min(this.H * 0.14, 90);
     return v;
+  },
+  /* ---------- annotations ---------- */
+  annotKey() { return this.isAxo ? axoKey(this.sketch) : null; },
+  annotVisible(el) { return (el.view || null) === this.annotKey(); },
+  noteScreen(el) { return el.view ? (p => ({ x: this.view.ox + p.x * this.view.z, y: this.view.oy + p.y * this.view.z })) : (p => this.toScreen(p)); },
+  /** Dimension line under the finger (screen px), or null. */
+  hitDim(pos) {
+    let best = null, bd = 14;
+    for (const el of this.sketch.lines) {
+      if (!isDim(el) || !this.annotVisible(el)) continue;
+      const g = dimGeom(this.toScreen(el.a), this.toScreen(el.b), (el.off == null ? 1.2 : el.off) * this.view.z);
+      const dx = g.B2.x - g.A2.x, dy = g.B2.y - g.A2.y, L2 = dx * dx + dy * dy || 1;
+      const t = clamp(((pos.x - g.A2.x) * dx + (pos.y - g.A2.y) * dy) / L2, 0, 1);
+      const d = Math.hypot(pos.x - (g.A2.x + dx * t), pos.y - (g.A2.y + dy * t));
+      if (d < bd) { bd = d; best = el; }
+    }
+    return best;
+  },
+  /** Note under the finger (its text box, or its leader), or null. */
+  hitNote(pos) {
+    for (let i = this.sketch.lines.length - 1; i >= 0; i--) {
+      const el = this.sketch.lines[i];
+      if (!isNote(el) || !this.annotVisible(el)) continue;
+      const b = this.noteBoxes.get(el);
+      if (b && pos.x >= b.x - 8 && pos.x <= b.x + b.w + 8 && pos.y >= b.y - 8 && pos.y <= b.y + b.h + 8) return el;
+    }
+    return null;
+  },
+  /** Where a note or its leader goes: snapped to a nearby corner, in plan or axo page space. */
+  notePoint(pos) {
+    const ep = this.nearestEndpoint(pos);
+    const s = ep ? this.toScreen(this.isAxo ? ep : { x: ep.x, y: ep.y }) : pos;
+    return this.toHatch(s.x, s.y);
+  },
+  async noteEditor(el) {
+    const isNew = !el.text;
+    return Modal.open(`<h2>${isNew ? 'Note' : 'Edit note'}</h2>
+      <form><textarea class="note-in" rows="3" maxlength="400" placeholder="e.g. NEW 2X6 STUD WALL">${esc(el.text || '')}</textarea>
+      <div class="label">Size</div>
+      <div class="opts" data-group="s">${NOTE_SIZES.map((sz, i) => `<button type="button" data-v="${i}" class="${i === (el.s ?? Store.settings.noteSize) ? 'on' : ''}">${sz.name}</button>`).join('')}</div>
+      <div class="btns" style="margin-top:18px">${isNew ? '' : '<button type="button" class="btn del" data-del style="color:var(--red)">Delete</button>'}<span style="flex:1"></span><button type="button" class="btn" data-x>Cancel</button><button class="btn primary">${isNew ? 'Add' : 'Save'}</button></div></form>`,
+      (c, done) => {
+        const ta = $('textarea', c); let size = el.s ?? Store.settings.noteSize;
+        setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 40);
+        $$('[data-group] [data-v]', c).forEach(b => b.onclick = () => { size = +b.dataset.v; $$('[data-group] [data-v]', c).forEach(x => x.classList.toggle('on', x === b)); });
+        $('[data-x]', c).onclick = () => done(null);
+        const del = $('[data-del]', c); if (del) del.onclick = () => done('delete');
+        $('form', c).onsubmit = e => { e.preventDefault(); const t = ta.value.trim().toUpperCase(); done(t ? { text: t, s: size } : null); };
+      });
+  },
+  async annotMenu() {
+    const s = Store.settings;
+    const v = await actionSheet('Annotate', [
+      { label: 'Dimension', value: 'dim', sel: s.annot === 'dim', hint: 'Drag between two points; drag a dimension to move it out' },
+      { label: 'Note', value: 'note', sel: s.annot === 'note', hint: 'Tap to place, or drag from what it points to' },
+      ...NOTE_SIZES.map((sz, i) => ({ label: `Note size: ${sz.name}`, value: 's' + i, sel: s.noteSize === i })),
+    ]);
+    if (v === 'dim' || v === 'note') { s.annot = v; toast(v === 'dim' ? 'Dimension: drag from one point to another' : 'Note: tap to place, or drag from what it points to'); }
+    else if (v && v[0] === 's') s.noteSize = +v.slice(1);
+    Store.save(); this.syncUI();
   },
   async hatchMenu() {
     const s = Store.settings;
@@ -893,6 +1042,8 @@ const Editor = {
     // Two fingers: pinch-zoom / pan. Cancels anything in progress.
     if (this.pointers.size >= 2) {
       this.drawing = null; this.stroke = null; this.lasso = null; this.panning = null;
+      if (this.annot && this.annot.before) this.sketch.lines = JSON.parse(this.annot.before);
+      this.annot = null;
       if (this.erasing) this.cancelErase();
       this.startGesture();
       this.render();
@@ -905,6 +1056,16 @@ const Editor = {
     if (this.tool === 'erase') {
       this.erasing = { id: e.pointerId, removed: [], before: this.snapshot() };
       this.eraseAt(pos);
+    } else if (this.tool === 'annot') {
+      if (s.annot === 'dim') {
+        const hit = this.hitDim(pos);
+        if (hit) this.annot = { id: e.pointerId, kind: 'dim-off', el: hit, before: this.snapshot(), moved: false };
+        else { const sp = this.snapStart(pos); this.annot = { id: e.pointerId, kind: 'dim-new', a: sp.p, b: sp.p, snapA: sp.snapped }; }
+      } else {
+        const hit = this.hitNote(pos);
+        if (hit) this.annot = { id: e.pointerId, kind: 'note-move', el: hit, before: this.snapshot(), x0: pos.x, y0: pos.y, at0: { ...hit.at }, moved: false };
+        else this.annot = { id: e.pointerId, kind: 'note-new', a: this.notePoint(pos), b: this.toHatch(pos.x, pos.y), x0: pos.x, y0: pos.y, moved: false };
+      }
     } else if (this.tool === 'hatch') {
       this.lasso = { id: e.pointerId, pts: [this.toHatch(pos.x, pos.y)] };
     } else if (this.tool === 'pencil') {
@@ -930,6 +1091,23 @@ const Editor = {
     }
     if (this.erasing && this.erasing.id === e.pointerId) return this.eraseAt(pos);
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    if (this.annot && this.annot.id === e.pointerId) {
+      const an = this.annot;
+      if (an.kind === 'dim-new') { const c = this.constrain(an.a, pos); an.b = c.p; an.snapB = c.snapped; }
+      else if (an.kind === 'dim-off') {
+        const g = dimGeom(this.toScreen(an.el.a), this.toScreen(an.el.b), 0);
+        const d = (pos.x - g.A.x) * g.nx + (pos.y - g.A.y) * g.ny;            // signed distance from the measured line
+        an.el.off = Math.round(d / this.view.z * 4) / 4 || 0.25; an.moved = true;
+      } else {
+        if (!an.moved && Math.hypot(pos.x - an.x0, pos.y - an.y0) < 8) return;
+        an.moved = true;
+        if (an.kind === 'note-move') {
+          const p0 = this.toHatch(an.x0, an.y0), p1 = this.toHatch(pos.x, pos.y);
+          an.el.at = { x: r3(an.at0.x + p1.x - p0.x), y: r3(an.at0.y + p1.y - p0.y) };
+        } else an.b = this.toHatch(pos.x, pos.y);
+      }
+      return this.render();
+    }
     if (this.lasso && this.lasso.id === e.pointerId) {
       const pts = this.lasso.pts, minD = 4 / this.view.z;
       for (const ce of (coalesced.length ? coalesced : [e])) {
@@ -970,6 +1148,36 @@ const Editor = {
     if (this.erasing && this.erasing.id === e.pointerId) {
       if (this.erasing.removed.length) this.commit(this.erasing.before);
       this.erasing = null; this.render(); return;
+    }
+    if (this.annot && this.annot.id === e.pointerId) {
+      const an = this.annot; this.annot = null;
+      if (cancelled) { if (an.before) this.sketch.lines = JSON.parse(an.before); this.render(); return; }
+      if (an.kind === 'dim-new') {
+        const A = this.toScreen(an.a), B = this.toScreen(an.b);
+        if (Math.hypot(B.x - A.x, B.y - A.y) > 8 && len3(an.a, an.b) > 1e-6) {
+          const before = this.snapshot(), el = { t: 'd', a: pt(an.a), b: pt(an.b), off: 1.25, c: Store.settings.color };
+          if (this.isAxo) el.view = axoKey(this.sketch);
+          this.sketch.lines.push(el); this.commit(before);
+        }
+      } else if (an.kind === 'dim-off') { if (an.moved) this.commit(an.before); }
+      else if (an.kind === 'note-move') {
+        if (an.moved) this.commit(an.before);
+        else this.editNote(an.el);
+      } else if (an.kind === 'note-new') {
+        const el = { t: 'n', text: '', at: an.moved ? { x: r3(an.b.x), y: r3(an.b.y) } : { x: r3(an.a.x), y: r3(an.a.y) }, s: Store.settings.noteSize, c: Store.settings.color };
+        if (an.moved) el.lead = { x: r3(an.a.x), y: r3(an.a.y) };
+        if (this.isAxo) el.view = axoKey(this.sketch);
+        this.render();
+        this.noteEditor(el).then(res => {
+          if (!res || res === 'delete') return this.render();
+          const before = this.snapshot();
+          Object.assign(el, res); Store.settings.noteSize = res.s;
+          this.sketch.lines.push(el); this.commit(before); this.render();
+        });
+        this.annotPreview = el;
+        return;
+      }
+      this.render(); return;
     }
     if (this.lasso && this.lasso.id === e.pointerId) {
       const ls = this.lasso; this.lasso = null;
@@ -1054,8 +1262,10 @@ const Editor = {
       const t = L2 ? clamp(((pos.x - a.x) * dx + (pos.y - a.y) * dy) / L2, 0, 1) : 0;
       return Math.hypot(pos.x - (a.x + dx * t), pos.y - (a.y + dy * t));
     };
+    const ann = this.hitDim(pos) || this.hitNote(pos);
+    if (ann) return ann;
     for (const el of this.sketch.lines) {
-      if (isHatch(el)) continue;
+      if (isHatch(el) || isAnnot(el)) continue;
       const pts = elPoints(el).map(p => this.toScreen(p));
       for (let i = 0; i < Math.max(1, pts.length - 1); i++) {
         const d = segDist(pts[i], pts[i + 1] || pts[i]);
@@ -1071,6 +1281,14 @@ const Editor = {
       if (pointInPoly(pos, el.pts.map(this.hatchToScreen(el)))) return el;
     }
     return null;
+  },
+  async editNote(el) {
+    const res = await this.noteEditor(el);
+    if (!res) return;
+    const before = this.snapshot();
+    if (res === 'delete') this.sketch.lines.splice(this.sketch.lines.indexOf(el), 1);
+    else Object.assign(el, res);
+    this.commit(before); this.render();
   },
   eraseAt(pos) {
     const el = this.hitTest(pos);
@@ -1133,6 +1351,8 @@ const Editor = {
   /* ---------- toolbar ---------- */
   setTool(t) {
     if (t === 'hatch' && Store.settings.tool === 'hatch') return this.hatchMenu();
+    if (t === 'annot' && Store.settings.tool === 'annot') return this.annotMenu();
+    if (t === 'annot') toast(Store.settings.annot === 'dim' ? 'Dimension: drag between two points. Tap Annotate again for notes.' : 'Note: tap to place, or drag from what it points to. Tap Annotate again for dimensions.');
     if (t === 'hatch') toast('Draw a loop around an area to hatch it. Tap Hatch again for pattern and value.');
     Store.settings.tool = t; this.hover = null;
     Store.save(); this.syncUI(); this.render();
@@ -1184,6 +1404,7 @@ const Editor = {
     $$('#mode-seg [data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === this.mode));
     $('#view-sketch').classList.toggle('axo', this.isAxo);
     $('#pen-swatch').style.background = INKS[s.color].hex;
+    const an = $('#annot-ico'); if (an) an.setAttribute('href', s.annot === 'note' ? '#i-note' : '#i-dim');
     if (this.sketch) $('#grid-label').textContent = `Grid ${fmtGrid(this.sketch.gridFt)}`;
     this.syncZoom();
   },
@@ -1196,10 +1417,10 @@ const Editor = {
     if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); return this.redo(); }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
-    const tools = { l: 'line', p: 'pencil', t: 'hatch', e: 'erase', h: 'hand' };
+    const tools = { l: 'line', p: 'pencil', t: 'hatch', a: 'annot', n: 'annot', e: 'erase', h: 'hand' };
     const acts = { o: 'ortho', g: 'snap', d: 'dims', f: 'fit', r: 'axo-rotate', '+': 'zoom-in', '=': 'zoom-in', '-': 'zoom-out' };
     if (tools[k]) { e.preventDefault(); this.setTool(tools[k]); }
-    else if (k === 'a') { e.preventDefault(); this.setMode(this.isAxo ? 'plan' : 'axo'); }
+    else if (k === 'x') { e.preventDefault(); this.setMode(this.isAxo ? 'plan' : 'axo'); }
     else if (acts[k]) { e.preventDefault(); this.action(acts[k]); }
     else if (k === 'escape') { if (this.drawing || this.stroke) { this.drawing = this.stroke = null; this.render(); } else $('#sk-back').click(); }
   },
@@ -1267,7 +1488,20 @@ const Editor = {
     if (!this.sketch || currentView !== 'sketch') return;
     const ctx = this.ctx, { W, H, dpr } = this, s = Store.settings;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover, proj: this.proj, axoKey: this.isAxo && !this.anim ? axoKey(this.sketch) : null });
+    this.noteBoxes = new WeakMap();
+    drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover, proj: this.proj, axoKey: this.isAxo && !this.anim ? axoKey(this.sketch) : null, boxes: this.noteBoxes });
+    const an = this.annot;
+    if (an && an.kind === 'dim-new' && len3(an.a, an.b) > 1e-6) {
+      ctx.globalAlpha = 0.8;
+      drawDimension(ctx, { a: an.a, b: an.b, off: 1.25 }, p => this.toScreen(p), this.view.z, weightScale(this.view.z), this.sketch.gridFt, RED);
+      ctx.globalAlpha = 1;
+    }
+    if (an && an.kind === 'note-new' && an.moved) {
+      const S2 = this.noteScreen({ view: this.isAxo }), T = S2(an.a), P = S2(an.b);
+      ctx.save(); ctx.strokeStyle = RED; ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(T.x, T.y); ctx.lineTo(P.x, P.y); ctx.stroke(); ctx.restore();
+      ctx.fillStyle = RED; ctx.beginPath(); ctx.arc(T.x, T.y, 3, 0, Math.PI * 2); ctx.fill();
+    }
     this.syncZoom();
     const pw = PEN_WEIGHTS[s.pen], ws = weightScale(this.view.z), ink = INKS[s.color].hex;
     if (this.lasso && this.lasso.pts.length > 1) {
@@ -1364,6 +1598,15 @@ function sketchText(project, sketch) {
     const wt = (PEN_WEIGHTS[l.w] || PEN_WEIGHTS[1]).full.toLowerCase(), ty = LINE_TYPES[typeOf(l)].name.toLowerCase();
     out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtLen(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
   });
+  const dims = sketch.lines.filter(isDim), notes = sketch.lines.filter(isNote);
+  if (dims.length) {
+    out.push(`Dimensions (${dims.length}):`);
+    dims.forEach((d, i) => out.push(`${i + 1}. ${P(d.a)} to ${P(d.b)} = ${fmtLen(len3(d.a, d.b) * g)}${d.view ? ' (on the axo view)' : ''}`));
+  }
+  if (notes.length) {
+    out.push(`Notes (${notes.length}):`);
+    notes.forEach((nt, i) => out.push(`${i + 1}. "${String(nt.text).replace(/\n/g, ' / ')}"${nt.view ? ' (on the axo view)' : ` at (${n(nt.at.x)}, ${n(nt.at.y)})`}${nt.lead && !nt.view ? `, pointing to (${n(nt.lead.x)}, ${n(nt.lead.y)})` : ''}`));
+  }
   if (hatches.length) {
     out.push(`Hatched areas (${hatches.length}):`);
     hatches.forEach((h, i) => {
