@@ -1763,15 +1763,24 @@ async function install() {
  * - Ready later: a bar stays at the top until tapped, and the update is applied
  *   automatically the next time the app goes to the background.
  * - Checked on every return to the app and every 30 minutes. */
-let swReg = null, updateWorker = null;
+let swReg = null, updateWorker = null, updateArrived = false, reloading = false;
 const bootTime = Date.now();
-function applyUpdate() {
-  if (!updateWorker) return false;
+const safeToReload = () => !!$('#cover') || Date.now() - bootTime < 8000;
+function saveAll() {
   if (currentView === 'sketch') Editor.flush();
   if (currentView === 'schedule' && typeof Schedule !== 'undefined') Schedule.save();
   Store.save();
-  updateWorker.postMessage('SKIP_WAITING');
-  return true;
+}
+function reloadForUpdate() {
+  if (reloading) return; reloading = true;
+  saveAll();
+  location.reload();
+}
+/** Apply whatever update is pending: reload into an active new version, or activate a waiting one. */
+function applyUpdate() {
+  if (updateArrived) { reloadForUpdate(); return true; }
+  if (updateWorker) { saveAll(); updateWorker.postMessage('SKIP_WAITING'); updateWorker.requested = true; return true; }
+  return false;
 }
 function showUpdateBar() {
   let bar = $('#update-bar');
@@ -1783,10 +1792,11 @@ function showUpdateBar() {
     document.body.appendChild(bar);
   }
 }
+/** A version left waiting (by an older service worker that waited for a tap). */
 function updateReady(w) {
   if (!w || updateWorker === w) return;
   updateWorker = w;
-  if ($('#cover') || Date.now() - bootTime < 8000) { applyUpdate(); return; }
+  if (safeToReload()) { applyUpdate(); return; }
   showUpdateBar();
 }
 function checkWaiting() {
@@ -1795,31 +1805,33 @@ function checkWaiting() {
 async function checkForUpdates() {
   if (!swReg) return false;
   try { await swReg.update(); } catch (_) { }
-  // An update may still be installing; give it a moment.
-  for (let i = 0; i < 20 && swReg.installing; i++) await new Promise(r => setTimeout(r, 250));
+  for (let i = 0; i < 24 && swReg.installing; i++) await new Promise(r => setTimeout(r, 250));
+  await new Promise(r => setTimeout(r, 300));       // let controllerchange arrive
   checkWaiting();
-  return !!updateWorker;
+  return updateArrived || !!updateWorker;
 }
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  const hadController = !!navigator.serviceWorker.controller;
+  // A new version took control of this page: reload now if nobody is mid-work, otherwise offer it.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;                      // first install: nothing to refresh
+    updateArrived = true;
+    if (safeToReload() || (updateWorker && updateWorker.requested)) reloadForUpdate();
+    else showUpdateBar();
+  });
   window.addEventListener('load', async () => {
     try {
       const reg = swReg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
       checkWaiting();
       reg.addEventListener('updatefound', () => {
         const w = reg.installing;
-        w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) updateReady(w); });
+        w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) setTimeout(() => { if (reg.waiting === w) updateReady(w); }, 400); });
       });
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') { if (updateWorker) applyUpdate(); }
+        if (document.visibilityState === 'hidden') { if (updateArrived || updateWorker) applyUpdate(); }
         else checkForUpdates();
       });
       setInterval(() => { if (document.visibilityState === 'visible') checkForUpdates(); }, 30 * 60 * 1000);
-      let reloading = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (reloading) return; reloading = true;
-        if (currentView === 'sketch') Editor.flush();
-        location.reload();
-      });
     } catch (_) { }
   });
 }

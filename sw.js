@@ -9,8 +9,10 @@ const ASSETS = [
   'icons/icon-192-v2.png', 'icons/icon-512-v2.png', 'icons/maskable-512-v2.png', 'icons/apple-touch-icon-v2.png', 'icons/favicon-64-v2.png'
 ];
 
+// A new version takes over as soon as it has downloaded (no waiting for a tap).
+// Open pages are told via 'controllerchange' and reload at a safe moment.
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
