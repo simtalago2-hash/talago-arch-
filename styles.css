@@ -343,3 +343,9 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6;stroke
 .proj-tabs button.on::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--red);border-radius:1px}
 .tab-pane{display:flex;flex-direction:column}
 .tab-pane[hidden]{display:none}
+
+/* Persistent "update ready" bar */
+.update-bar{position:fixed;z-index:95;left:50%;transform:translateX(-50%);top:calc(var(--safe-t) + 10px);max-width:calc(100vw - 24px);
+  background:var(--ink);color:var(--paper);font:inherit;font-size:15px;padding:11px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.25);
+  display:flex;gap:12px;align-items:center;white-space:nowrap;animation:fade .2s}
+.update-bar b{color:#f3b3ad;font-weight:600;text-decoration:underline}
