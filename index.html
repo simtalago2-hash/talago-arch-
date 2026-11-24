@@ -14,6 +14,7 @@
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64-v2.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon-v2.png">
 <link rel="preload" href="fonts/Inter.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/ArchitectsDaughter.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -41,6 +42,8 @@
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
     <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></symbol>
     <symbol id="i-hatch" viewBox="0 0 24 24"><path d="M4.5 4.5h15v15h-15z" stroke-width="1.3"/><path d="M4.5 11L11 4.5M4.5 17L17 4.5M7 19.5L19.5 7M13 19.5l6.5-6.5"/></symbol>
+    <symbol id="i-dim" viewBox="0 0 24 24"><path d="M3 16h18M5 12.5v7M19 12.5v7M3.5 18l3-4M17.5 18l3-4" stroke-width="1.4"/><path d="M8.5 9.5L12 3l3.5 6.5M9.7 7.3h4.6" stroke-width="1.5"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M4 20l5-5" stroke-width="1.4"/><path d="M3.6 20.4l3.2-1 -2.2-2.2z" fill="currentColor"/><path d="M11 6h9M11 10h9M11 14h6" stroke-width="1.6"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   </defs>
 </svg>
@@ -148,6 +151,7 @@
       <button type="button" class="tool" data-tool="line" aria-label="Straight line (L)"><svg><use href="#i-line"/></svg></button>
       <button type="button" class="tool" data-tool="pencil" aria-label="Pencil (P)"><svg><use href="#i-pencil"/></svg></button>
       <button type="button" class="tool" data-tool="hatch" aria-label="Hatch (T)"><svg><use href="#i-hatch"/></svg></button>
+      <button type="button" class="tool" data-tool="annot" aria-label="Annotate: dimensions and notes (A)"><svg><use id="annot-ico" href="#i-dim"/></svg></button>
       <button type="button" class="tool" data-tool="erase" aria-label="Eraser (E)"><svg><use href="#i-eraser"/></svg></button>
       <button type="button" class="tool" data-tool="hand" aria-label="Pan (H)"><svg><use href="#i-hand"/></svg></button>
       <span class="sep"></span>

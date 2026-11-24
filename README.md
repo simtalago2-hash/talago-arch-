@@ -10,6 +10,10 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
 - **Tools** (bottom toolbar):
   - **Straight line** (L): drag and you get a clean line from A to B, heavier at both ends.
   - **Pencil** (P): freehand strokes.
+  - **Annotate** (A): tap the tool again to switch between modes.
+    - **Dimension**: drag between two points to get an architectural dimension (extension lines, slash ticks, value above). It snaps like lines and measures true 3D length in axo. Drag a dimension line to move it out.
+    - **Note**: tap to place a note, or drag from what it points to so it gets a leader and arrowhead. Tap a note to edit or delete it, or drag it to move it. Notes come in small, medium and large.
+    - **Lettering**: all notes and dimensions are written in capitals in a hand-lettered blueprint font.
   - **Eraser** (E).
   - **Hand** (H): pan.
   - **Hatch** (T): draw a loop around an area to tone it, after Ching. Tap Hatch again to choose diagonal hatching (either direction), crosshatching or layered crosshatching, and a light, medium or dark value (set by stroke spacing). Strokes are freehand, not ruled, each with a pen hit at both ends. With Snap on, the loop is straightened and its corners land on grid dots (or half-grid dots when zoomed in) and existing line ends. Hatching drawn in plan stays on the plan; hatching drawn in axo stays with that axo view. Tap inside a hatch with the eraser to remove it.
@@ -37,7 +41,7 @@ A personal drafting sketchbook. It opens on a red notebook cover that flips to y
   - **Views and export**: day, week and month zoom (keeps your place). Set the project start date, copy as text for ChatGPT, or export CSV.
 - **Export for Rhino (DXF)** (⋯ menu, or a sketch's ⋯ on the project page): choose what one grid unit means (inches, feet, millimetres, centimetres, metres or unitless) and the file opens in Rhino at true size.
   - **What comes across**: straight lines become line curves with true 3D heights; pencil strokes become smooth NURBS curves; hatches become real, editable hatches with their patterns and spacing.
-  - **Layers and linetypes**: Ching's weights become layers (TA Major 0.50 mm, TA Secondary 0.25 mm, TA Layout 0.13 mm) and line types become linetypes (dashed, hidden, center).
+  - **Layers and linetypes**: Ching's weights become layers (TA Major 0.50 mm, TA Secondary 0.25 mm, TA Layout 0.13 mm); dimensions and notes go on a TA Annotation layer as lines and text and line types become linetypes (dashed, hidden, center).
   - **3D model or axo drawing**: export the true 3D model, or, when you have an axo, a flat axo drawing as shown, including face hatching.
 - **Back up / restore** the notebook as a file (✦ menu).
 - **Works offline** and installs to your home screen as an app.
