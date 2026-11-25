@@ -53,6 +53,7 @@ const inkOf = el => (INKS[el.c] || INKS[0]).hex;
 const isFree = el => el.t === 'f';
 const isHatch = el => el.t === 'h';
 const isLine = el => !el.t;
+const isArc = el => el.t === 'a';
 const isDim = el => el.t === 'd';
 const isNote = el => el.t === 'n';
 const isAnnot = el => el.t === 'd' || el.t === 'n';
@@ -73,7 +74,7 @@ function normProject(p) { if (!Array.isArray(p.sketches)) p.sketches = []; if (!
 const Store = {
   data: null,
   defaults() {
-    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', ltype: 'solid', hatch: 'x', hval: 1, annot: 'dim', noteSize: 1 } };
+    return { projects: [], last: null, settings: { ortho: false, snap: true, dims: false, pen: 1, color: 0, tool: 'line', ltype: 'solid', hatch: 'x', hval: 1, annot: 'dim', noteSize: 1, lmode: 'line' } };
   },
   load() {
     let d = null;
@@ -212,7 +213,7 @@ const r3 = v => Math.round(v * 1000) / 1000;
 /** Compact stored point: z only when off the plan. */
 function pt(p) { const o = { x: r3(p.x), y: r3(p.y) }; if (p.z) o.z = r3(p.z); return o; }
 const len3 = (a, b) => Math.hypot(b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0));
-const elevated = el => (isHatch(el) || isAnnot(el)) ? false : isFree(el) ? el.pts.some(p => p.z) : !!(el.a.z || el.b.z);
+const elevated = el => (isHatch(el) || isAnnot(el)) ? false : isArc(el) ? !!el.o.z : isFree(el) ? el.pts.some(p => p.z) : !!(el.a.z || el.b.z);
 
 /* ================================================================ drawing primitives */
 function weightScale(z) { return Math.sqrt(z / BASE_Z); }
@@ -490,6 +491,73 @@ function drawDim(ctx, ax, ay, bx, by, label, color, offset = 12) {
   ctx.restore();
 }
 
+/* ---------- arcs and circles (compass-drawn: crisp, heavier at open ends) ---------- */
+// Arc: { t:'a', o:{x,y,z}, r, s: start angle (rad, page y-down), d: signed sweep (2π = full circle), w, c, k }
+const TAU = Math.PI * 2;
+const isFull = el => Math.abs(el.d) >= TAU - 1e-6;
+const normPos = x => { x %= TAU; return x <= 0 ? x + TAU : x; };          // (0, 2π]
+const wrapPi = x => { x = (x + Math.PI) % TAU; if (x < 0) x += TAU; return x - Math.PI; };
+function arcPoint(el, t) { const ang = el.s + el.d * t; return { x: el.o.x + el.r * Math.cos(ang), y: el.o.y + el.r * Math.sin(ang), z: el.o.z || 0 }; }
+function arcPoints(el, n) { const out = []; for (let i = 0; i <= n; i++) out.push(arcPoint(el, i / n)); return out; }
+function arcEnds(el) { return isFull(el) ? [] : [arcPoint(el, 0), arcPoint(el, 1)]; }
+/** Circle through three points (plan coordinates), or null if they are in a line. */
+function circleFrom3(A, P, B) {
+  const ax = A.x, ay = A.y, bx = P.x, by = P.y, cx = B.x, cy = B.y;
+  const dd = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+  if (Math.abs(dd) < 1e-9) return null;
+  const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+  const ox = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / dd, oy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / dd;
+  const s = Math.atan2(ay - oy, ax - ox), e = Math.atan2(cy - oy, cx - ox), pa = Math.atan2(by - oy, bx - ox);
+  const ccw = normPos(e - s), rel = normPos(pa - s);
+  return { o: { x: ox, y: oy, z: A.z || 0 }, r: Math.hypot(ax - ox, ay - oy), s, d: rel < ccw ? ccw : ccw - TAU };
+}
+/** Arc keeping both ends fixed with its center moved to F (projected onto the chord's bisector). */
+function arcWithCenter(el, F) {
+  const A = arcPoint(el, 0), B = arcPoint(el, 1);
+  const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2, cx = B.x - A.x, cy = B.y - A.y, cl = Math.hypot(cx, cy) || 1;
+  const ux = -cy / cl, uy = cx / cl, t = (F.x - mx) * ux + (F.y - my) * uy;
+  const o = { x: mx + ux * t, y: my + uy * t, z: el.o.z || 0 };
+  const s = Math.atan2(A.y - o.y, A.x - o.x), e = Math.atan2(B.y - o.y, B.x - o.x);
+  return { o, r: Math.hypot(A.x - o.x, A.y - o.y), s, d: el.d > 0 ? normPos(e - s) : normPos(e - s) - TAU };
+}
+/** Tapered stroke along a screen polyline: heavier at open ends (closed curves stay even). */
+function drawPolyTaper(ctx, P, wEnd, wMid, color, closed) {
+  const n = P.length; if (n < 2) return;
+  const cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + Math.hypot(P[i].x - P[i - 1].x, P[i].y - P[i - 1].y));
+  const L = cum[n - 1]; if (L < 0.5) return;
+  const k = Math.min(L * 0.16, 9 + wEnd * 3);
+  const half = d => closed ? (wMid + (wEnd - wMid) * 0.3) / 2 : (wMid + (wEnd - wMid) * Math.exp(-d / Math.max(k, 0.001))) / 2;
+  const left = [], right = [];
+  for (let i = 0; i < n; i++) {
+    const p0 = P[Math.max(0, i - 1)], p1 = P[Math.min(n - 1, i + 1)];
+    let tx = p1.x - p0.x, ty = p1.y - p0.y; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+    const h = half(Math.min(cum[i], L - cum[i]));
+    left.push([P[i].x - ty * h, P[i].y + tx * h]); right.push([P[i].x + ty * h, P[i].y - tx * h]);
+  }
+  ctx.fillStyle = color; ctx.beginPath();
+  left.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  for (let i = n - 1; i >= 0; i--) ctx.lineTo(right[i][0], right[i][1]);
+  ctx.closePath(); ctx.fill();
+  if (!closed) for (const p of [P[0], P[n - 1]]) { ctx.beginPath(); ctx.arc(p.x, p.y, wEnd / 2, 0, TAU); ctx.fill(); }
+}
+function drawArcEl(ctx, el, S, z, wEnd, wMid, color, dash) {
+  const rpx = el.r * z, n = clamp(Math.ceil(Math.abs(el.d) * rpx / 4), 12, 240);
+  const P = arcPoints(el, n).map(S), full = isFull(el);
+  if (!dash) return drawPolyTaper(ctx, P, wEnd, wMid, color, full);
+  const cum = [0];
+  for (let i = 1; i < P.length; i++) cum.push(cum[i - 1] + Math.hypot(P[i].x - P[i - 1].x, P[i].y - P[i - 1].y));
+  const L = cum[cum.length - 1];
+  if (L < dash[0] * 1.6) return drawPolyTaper(ctx, P, wEnd, wMid, color, full);
+  const at = d => { let i = 1; while (i < cum.length - 1 && cum[i] < d) i++; const f = (d - cum[i - 1]) / ((cum[i] - cum[i - 1]) || 1); return { x: P[i - 1].x + (P[i].x - P[i - 1].x) * f, y: P[i - 1].y + (P[i].y - P[i - 1].y) * f }; };
+  for (const [t0, t1] of dashSegments(L, dash)) {
+    const d0 = t0 * L, d1 = t1 * L, seg = [at(d0)];
+    for (let i = 0; i < cum.length; i++) if (cum[i] > d0 && cum[i] < d1) seg.push(P[i]);
+    seg.push(at(d1));
+    drawPolyTaper(ctx, seg, Math.min(wEnd * 0.6, wMid * 1.6), wMid * 1.2, color, false);
+  }
+}
+
 /* ---------- annotations: architectural dimensions and blueprint notes ---------- */
 const NOTE_SIZES = [{ name: 'Small', u: 0.45 }, { name: 'Medium', u: 0.62 }, { name: 'Large', u: 0.9 }];
 /** Dimension geometry on screen: points A, B; perpendicular n; offset dimension line A2–B2. */
@@ -584,6 +652,10 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
     if (isFree(el)) {
       ctx.globalAlpha = (hi ? 0.6 : 0.92) * fade;
       drawFree(ctx, el.pts.map(S), pw.free * ws, color);
+    } else if (isArc(el)) {
+      ctx.globalAlpha = (hi ? 0.6 : 1) * fade;
+      const dash = LINE_TYPES[typeOf(el)].dash;
+      drawArcEl(ctx, el, S, unit, pw.end * ws, pw.mid * ws, color, dash && dash.map(v => v * ws));
     } else {
       ctx.globalAlpha = (hi ? 0.6 : 1) * fade;
       const a = S(el.a), b = S(el.b);
@@ -603,6 +675,10 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
   }
   if (opts.dims && opts.gridFt) {
     for (const el of els) {
+      if (isArc(el) && el.r * unit > 14) {
+        const m = S(arcPoint(el, 0.5)), c = S(el.o);
+        drawDim(ctx, c.x, c.y, m.x, m.y, `R ${fmtLen(el.r * opts.gridFt)}`, MUTED, 9);
+      }
       if (!isLine(el)) continue;
       const a = S(el.a), b = S(el.b);
       if (Math.hypot(b.x - a.x, b.y - a.y) < 28) continue;
@@ -613,6 +689,7 @@ function drawScene(ctx, W, H, els, view, opts = {}) {
 
 // Hatches drawn in axo live in that view's page space, so they don't count toward plan/3D bounds.
 function elPoints(el) {
+  if (isArc(el)) return arcPoints(el, 48);
   if (isHatch(el)) return el.view ? [] : el.pts;
   if (isDim(el)) return el.view ? [] : [el.a, el.b];
   if (isNote(el)) return el.view ? [] : [el.at, ...(el.lead ? [el.lead] : [])];
@@ -713,6 +790,7 @@ const Editor = {
     this.proj = this.isAxo ? makeProj(axoParams(sketch)) : PLAN;
     this.undoStack = []; this.redoStack = [];
     this.drawing = this.stroke = this.lasso = this.annot = this.erasing = this.gesture = this.panning = null;
+    this.arcDraw = this.arc3 = this.arcEdit = this.selArc = this.pendingSelect = null;
     this.pointers.clear();
     this.resize(true);
     const saved = this.isAxo ? sketch.axoView : sketch.view;
@@ -793,6 +871,144 @@ const Editor = {
     if (!has3d) v.oy += Math.min(this.H * 0.14, 90);
     return v;
   },
+  /* ---------- arcs ---------- */
+  isArcMode() { return this.tool === 'line' && Store.settings.lmode !== 'line'; },
+  arcAngleSnap(ang) { return Store.settings.ortho ? Math.round(ang / (Math.PI / 12)) * (Math.PI / 12) : ang; },
+  /** Handles of the selected arc, in world coordinates. */
+  arcHandles(el) {
+    const h = [{ kind: 'center', p: el.o }];
+    if (isFull(el)) h.push({ kind: 'radius', p: arcPoint(el, 0) });
+    else h.push({ kind: 'start', p: arcPoint(el, 0) }, { kind: 'end', p: arcPoint(el, 1) });
+    return h;
+  },
+  hitArcHandle(pos) {
+    const el = this.selArc; if (!el || !this.sketch.lines.includes(el)) return null;
+    let best = null, bd = 22;
+    for (const h of this.arcHandles(el)) { const s = this.toScreen(h.p), d = Math.hypot(s.x - pos.x, s.y - pos.y); if (d < bd) { bd = d; best = h; } }
+    return best;
+  },
+  hitArc(pos) { const el = this.hitTest(pos); return el && isArc(el) ? el : null; },
+  arcDown(e, pos) {
+    const s = Store.settings, h = this.hitArcHandle(pos);
+    if (h) { this.arcEdit = { id: e.pointerId, h, el: this.selArc, before: this.snapshot(), orig: JSON.parse(JSON.stringify(this.selArc)), moved: false }; return; }
+    const hitA = this.hitArc(pos);
+    if (s.lmode === 'arc3' && this.arc3 && this.arc3.stage === 'bend') {
+      this.arc3.id = e.pointerId; this.arc3.p = this.toPlane(pos.x, pos.y, this.arc3.a.z || 0); return;
+    }
+    this.pendingSelect = hitA ? { id: e.pointerId, el: hitA, x: pos.x, y: pos.y } : null;
+    const sp = this.snapStart(pos);
+    if (s.lmode === 'arcc') this.arcDraw = { id: e.pointerId, o: sp.p, snapO: sp.snapped, r: 0, s: null, d: 0, last: null, cur: sp.p };
+    else this.arc3 = { id: e.pointerId, stage: 'chord', a: sp.p, b: sp.p, snapA: sp.snapped };
+    this.selArc = null;
+  },
+  arcMove(e, pos) {
+    const s = Store.settings;
+    if (this.arcEdit && this.arcEdit.id === e.pointerId) {
+      const ed = this.arcEdit, el = ed.el, o = ed.orig, F = this.toPlane(pos.x, pos.y, o.o.z || 0);
+      ed.moved = true;
+      if (ed.h.kind === 'center') {
+        if (isFull(o)) { const sp = this.snapStart(pos); el.o = { x: sp.p.x, y: sp.p.y, z: o.o.z || 0 }; }
+        else Object.assign(el, arcWithCenter(o, F));
+      } else if (ed.h.kind === 'radius') {
+        let r = Math.hypot(F.x - o.o.x, F.y - o.o.y); if (s.snap) r = Math.max(this.snapStep(), roundTo(r, this.snapStep()));
+        el.r = r;
+      } else {
+        const ang = this.arcAngleSnap(Math.atan2(F.y - o.o.y, F.x - o.o.x));
+        if (ed.h.kind === 'start') { const end = o.s + o.d; el.s = ang; el.d = o.d > 0 ? normPos(end - ang) : normPos(end - ang) - TAU; }
+        else { el.d = o.d > 0 ? normPos(ang - o.s) : normPos(ang - o.s) - TAU; }
+      }
+      return true;
+    }
+    if (this.pendingSelect && this.pendingSelect.id === e.pointerId && Math.hypot(pos.x - this.pendingSelect.x, pos.y - this.pendingSelect.y) > 8) this.pendingSelect = null;
+    const ad = this.arcDraw;
+    if (ad && ad.id === e.pointerId) {
+      const O = this.toScreen(ad.o), dist = Math.hypot(pos.x - O.x, pos.y - O.y);
+      const ep = this.nearestEndpoint(pos);
+      const F = ep && Math.hypot(ep.x - ad.o.x, ep.y - ad.o.y) > 1e-6 ? ep : this.toPlane(pos.x, pos.y, ad.o.z || 0);
+      let r = Math.hypot(F.x - ad.o.x, F.y - ad.o.y);
+      if (!ep && s.snap) r = Math.max(this.snapStep(), roundTo(r, this.snapStep()));
+      ad.r = r; ad.snapR = !!ep;
+      const ang = Math.atan2(F.y - ad.o.y, F.x - ad.o.x);
+      if (ad.s == null) { if (dist > 18) { ad.s = this.arcAngleSnap(ang); ad.last = ang; } }
+      else { ad.d += wrapPi(ang - ad.last); ad.last = ang; }
+      return true;
+    }
+    const a3 = this.arc3;
+    if (a3 && a3.id === e.pointerId) {
+      if (a3.stage === 'chord') { const c = this.constrain(a3.a, pos); a3.b = c.p; a3.snapB = c.snapped; }
+      else a3.p = this.toPlane(pos.x, pos.y, a3.a.z || 0);
+      return true;
+    }
+    return false;
+  },
+  arcPreviewEl() {
+    const ad = this.arcDraw;
+    if (ad && ad.r > 0) {
+      const sweep = ad.s == null ? TAU : this.arcFinalSweep(ad);
+      return { t: 'a', o: ad.o, r: ad.r, s: ad.s == null ? 0 : ad.s, d: sweep };
+    }
+    const a3 = this.arc3;
+    if (a3 && a3.stage === 'bend' && a3.p) { const c = circleFrom3(a3.a, a3.p, a3.b); if (c) return { t: 'a', ...c }; }
+    return null;
+  },
+  arcFinalSweep(ad) {
+    const d = ad.d;
+    if (Math.abs(d) < 0.15 || Math.abs(d) >= TAU - 0.12) return TAU;          // quick drag out, or all the way round: a full circle
+    return Store.settings.ortho ? (Math.round(d / (Math.PI / 12)) * (Math.PI / 12) || Math.sign(d) * Math.PI / 12) : d;
+  },
+  pushArc(geo) {
+    const s = Store.settings, before = this.snapshot();
+    const el = { t: 'a', o: pt(geo.o), r: r3(geo.r), s: +geo.s.toFixed(6), d: +geo.d.toFixed(6), w: s.pen, c: s.color };
+    if (s.ltype && s.ltype !== 'solid') el.k = s.ltype;
+    this.sketch.lines.push(el); this.commit(before);
+    return el;
+  },
+  arcUp(e, cancelled) {
+    if (this.arcEdit && this.arcEdit.id === e.pointerId) {
+      const ed = this.arcEdit; this.arcEdit = null;
+      if (cancelled) { this.sketch.lines = JSON.parse(ed.before); this.selArc = null; }
+      else if (ed.moved) { ['s', 'd', 'r'].forEach(k => { ed.el[k] = +(+ed.el[k]).toFixed(6); }); ed.el.o = pt(ed.el.o); this.commit(ed.before); }
+      return true;
+    }
+    if (this.pendingSelect && this.pendingSelect.id === e.pointerId) {
+      const sel = this.pendingSelect.el; this.pendingSelect = null;
+      this.arcDraw = null; if (this.arc3 && this.arc3.stage === 'chord') this.arc3 = null;
+      this.selArc = sel; toast('Drag the red handles: center bends the arc, ends trim it'); return true;
+    }
+    const ad = this.arcDraw;
+    if (ad && ad.id === e.pointerId) {
+      this.arcDraw = null;
+      if (!cancelled && ad.r * this.view.z > 6) { const el = this.pushArc({ o: ad.o, r: ad.r, s: ad.s == null ? 0 : ad.s, d: this.arcFinalSweep(ad) }); this.selArc = el; }
+      return true;
+    }
+    const a3 = this.arc3;
+    if (a3 && a3.id === e.pointerId) {
+      if (cancelled) { this.arc3 = null; return true; }
+      if (a3.stage === 'chord') {
+        const A = this.toScreen(a3.a), B = this.toScreen(a3.b);
+        if (Math.hypot(B.x - A.x, B.y - A.y) > 10) { a3.stage = 'bend'; a3.id = null; a3.p = null; toast('Now drag to bend the arc through a third point'); }
+        else this.arc3 = null;
+      } else {
+        const c = a3.p && circleFrom3(a3.a, a3.p, a3.b);
+        this.arc3 = null;
+        if (c) { const el = this.pushArc(c); this.selArc = el; }
+      }
+      return true;
+    }
+    return false;
+  },
+  async drawMenu() {
+    const s = Store.settings;
+    const v = await actionSheet('Draw', [
+      { label: 'Line', value: 'line', sel: s.lmode === 'line', hint: 'Straight line from point to point' },
+      { label: 'Center arc / circle', value: 'arcc', sel: s.lmode === 'arcc', hint: 'Press the center, drag out: release for a circle, keep going round for an arc' },
+      { label: '3-point arc', value: 'arc3', sel: s.lmode === 'arc3', hint: 'Drag end to end, then drag to bend it through a third point' },
+    ]);
+    if (!v) return;
+    s.lmode = v; this.arc3 = null; this.selArc = null; Store.save(); this.syncUI(); this.render();
+    toast(v === 'line' ? 'Line' : v === 'arcc' ? 'Center arc: press the center and drag out. Tap an arc to adjust it.' : '3-point arc: drag end to end, then bend. Tap an arc to adjust it.');
+  },
+
   /* ---------- annotations ---------- */
   annotKey() { return this.isAxo ? axoKey(this.sketch) : null; },
   annotVisible(el) { return (el.view || null) === this.annotKey(); },
@@ -945,7 +1161,10 @@ const Editor = {
   },
   endpoints() {
     const out = [];
-    for (const el of this.sketch.lines) if (isLine(el)) out.push(el.a, el.b);
+    for (const el of this.sketch.lines) {
+      if (isLine(el)) out.push(el.a, el.b);
+      else if (isArc(el)) out.push(el.o, ...arcEnds(el));
+    }
     return out;
   },
   /** Nearest existing line end to a screen position (within the snap radius). */
@@ -1041,7 +1260,9 @@ const Editor = {
     if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || this.spaceDown)) return this.startPan(e.pointerId, pos);
     // Two fingers: pinch-zoom / pan. Cancels anything in progress.
     if (this.pointers.size >= 2) {
-      this.drawing = null; this.stroke = null; this.lasso = null; this.panning = null;
+      this.drawing = null; this.stroke = null; this.lasso = null; this.panning = null; this.arcDraw = null; this.pendingSelect = null;
+      if (this.arc3 && this.arc3.stage === 'chord') this.arc3 = null; else if (this.arc3) this.arc3.id = null;
+      if (this.arcEdit) { this.sketch.lines = JSON.parse(this.arcEdit.before); this.arcEdit = null; this.selArc = null; }
       if (this.annot && this.annot.before) this.sketch.lines = JSON.parse(this.annot.before);
       this.annot = null;
       if (this.erasing) this.cancelErase();
@@ -1073,6 +1294,8 @@ const Editor = {
       const ep = this.isAxo ? this.nearestEndpoint(pos) : null;
       const z0 = ep ? (ep.z || 0) : 0;
       this.stroke = { id: e.pointerId, z0, el: { t: 'f', pts: [this.toPlane(pos.x, pos.y, z0)], w: s.pen, c: s.color } };
+    } else if (this.isArcMode()) {
+      this.arcDown(e, pos);
     } else {
       const sp = this.snapStart(pos);
       this.drawing = { id: e.pointerId, a: sp.p, b: sp.p, snapA: sp.snapped, snapB: false, axis: null };
@@ -1124,6 +1347,7 @@ const Editor = {
       }
       return this.render();
     }
+    if (this.isArcMode() && this.arcMove(e, pos)) return this.render();
     if (this.drawing && this.drawing.id === e.pointerId) {
       const last = coalesced.length ? this.local(coalesced[coalesced.length - 1]) : pos;
       const c = this.constrain(this.drawing.a, last);
@@ -1207,6 +1431,7 @@ const Editor = {
       }
       this.render(); return;
     }
+    if (this.arcUp(e, cancelled)) { this.render(); return; }
     if (this.drawing && this.drawing.id === e.pointerId) {
       const d = this.drawing; this.drawing = null;
       const A = this.toScreen(d.a), B = this.toScreen(d.b);
@@ -1350,6 +1575,8 @@ const Editor = {
 
   /* ---------- toolbar ---------- */
   setTool(t) {
+    if (t === 'line' && Store.settings.tool === 'line') return this.drawMenu();
+    if (t !== 'line') { this.arc3 = null; this.selArc = null; }
     if (t === 'hatch' && Store.settings.tool === 'hatch') return this.hatchMenu();
     if (t === 'annot' && Store.settings.tool === 'annot') return this.annotMenu();
     if (t === 'annot') toast(Store.settings.annot === 'dim' ? 'Dimension: drag between two points. Tap Annotate again for notes.' : 'Note: tap to place, or drag from what it points to. Tap Annotate again for dimensions.');
@@ -1405,6 +1632,7 @@ const Editor = {
     $('#view-sketch').classList.toggle('axo', this.isAxo);
     $('#pen-swatch').style.background = INKS[s.color].hex;
     const an = $('#annot-ico'); if (an) an.setAttribute('href', s.annot === 'note' ? '#i-note' : '#i-dim');
+    const li = $('#line-ico'); if (li) li.setAttribute('href', s.lmode === 'arcc' ? '#i-arcc' : s.lmode === 'arc3' ? '#i-arc3' : '#i-line');
     if (this.sketch) $('#grid-label').textContent = `Grid ${fmtGrid(this.sketch.gridFt)}`;
     this.syncZoom();
   },
@@ -1417,8 +1645,10 @@ const Editor = {
     if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); return this.redo(); }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
+    if (k === 'c' && !e.shiftKey) { e.preventDefault(); Store.settings.tool = 'line'; Store.settings.lmode = Store.settings.lmode === 'arcc' ? 'arc3' : 'arcc'; Store.save(); this.syncUI(); toast(Store.settings.lmode === 'arcc' ? 'Center arc / circle' : '3-point arc'); return; }
     const tools = { l: 'line', p: 'pencil', t: 'hatch', a: 'annot', n: 'annot', e: 'erase', h: 'hand' };
     const acts = { o: 'ortho', g: 'snap', d: 'dims', f: 'fit', r: 'axo-rotate', '+': 'zoom-in', '=': 'zoom-in', '-': 'zoom-out' };
+    if (k === 'l' && Store.settings.tool !== 'line') { Store.settings.lmode = 'line'; }
     if (tools[k]) { e.preventDefault(); this.setTool(tools[k]); }
     else if (k === 'x') { e.preventDefault(); this.setMode(this.isAxo ? 'plan' : 'axo'); }
     else if (acts[k]) { e.preventDefault(); this.action(acts[k]); }
@@ -1490,6 +1720,31 @@ const Editor = {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.noteBoxes = new WeakMap();
     drawScene(ctx, W, H, this.sketch.lines, this.view, { dims: s.dims, gridFt: this.sketch.gridFt, highlight: this.hover, proj: this.proj, axoKey: this.isAxo && !this.anim ? axoKey(this.sketch) : null, boxes: this.noteBoxes });
+    // arcs: preview, chord, selection handles
+    const pvw = PEN_WEIGHTS[s.pen], pws = weightScale(this.view.z), toS = p => this.toScreen(p), unitPx = gridUnitPx(this.view.z, this.proj);
+    const prev = this.arcPreviewEl();
+    if (prev) {
+      ctx.globalAlpha = 0.85; drawArcEl(ctx, prev, toS, unitPx, pvw.end * pws, pvw.mid * pws, INKS[s.color].hex, null); ctx.globalAlpha = 1;
+      const O = toS(prev.o);
+      ctx.strokeStyle = RED; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      const R0 = toS(arcPoint(prev, this.arcDraw ? 1 : 0.5)); ctx.beginPath(); ctx.moveTo(O.x, O.y); ctx.lineTo(R0.x, R0.y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(O.x - 6, O.y); ctx.lineTo(O.x + 6, O.y); ctx.moveTo(O.x, O.y - 6); ctx.lineTo(O.x, O.y + 6); ctx.stroke();
+      const deg = Math.round(Math.abs(prev.d) * 180 / Math.PI);
+      drawDim(ctx, O.x, O.y, R0.x, R0.y, `R ${fmtLen(prev.r * this.sketch.gridFt)}  ${isFull(prev) ? 'circle' : deg + '°'}`, RED, 12);
+    }
+    if (this.arc3 && (this.arc3.stage === 'chord' || !this.arc3.p)) {
+      const A = toS(this.arc3.a), B = toS(this.arc3.b);
+      ctx.strokeStyle = RED; ctx.lineWidth = 1.2; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = RED; for (const P of [A, B]) { ctx.beginPath(); ctx.arc(P.x, P.y, 4, 0, TAU); ctx.fill(); }
+    }
+    if (this.selArc && this.sketch.lines.includes(this.selArc) && this.tool === 'line') {
+      ctx.strokeStyle = RED; ctx.fillStyle = '#fffff6'; ctx.lineWidth = 2;
+      for (const h of this.arcHandles(this.selArc)) {
+        const P = toS(h.p); ctx.beginPath(); ctx.arc(P.x, P.y, h.kind === 'center' ? 7 : 6, 0, TAU); ctx.fill(); ctx.stroke();
+        if (h.kind === 'center') { ctx.beginPath(); ctx.moveTo(P.x - 3, P.y); ctx.lineTo(P.x + 3, P.y); ctx.moveTo(P.x, P.y - 3); ctx.lineTo(P.x, P.y + 3); ctx.stroke(); }
+      }
+    }
     const an = this.annot;
     if (an && an.kind === 'dim-new' && len3(an.a, an.b) > 1e-6) {
       ctx.globalAlpha = 0.8;
@@ -1598,6 +1853,12 @@ function sketchText(project, sketch) {
     const wt = (PEN_WEIGHTS[l.w] || PEN_WEIGHTS[1]).full.toLowerCase(), ty = LINE_TYPES[typeOf(l)].name.toLowerCase();
     out.push(`${i + 1}. ${P(l.a)} to ${P(l.b)}, length ${fmtLen(len)}, ${desc}, ${wt}, ${ty}${l.c ? `, ${INKS[l.c].name.toLowerCase()}` : ''}`);
   });
+  const arcs = sketch.lines.filter(isArc);
+  if (arcs.length) {
+    out.push(`Arcs and circles (${arcs.length}):`);
+    const deg = r => Math.round(-r * 180 / Math.PI);       // page y-down → conventional counter-clockwise degrees
+    arcs.forEach((c, i) => out.push(`${i + 1}. ${isFull(c) ? 'circle' : 'arc'}, center ${P(c.o)}, radius ${fmtLen(c.r * g)}${isFull(c) ? '' : `, from ${deg(c.s)}° sweeping ${-Math.round(c.d * 180 / Math.PI)}°`}`));
+  }
   const dims = sketch.lines.filter(isDim), notes = sketch.lines.filter(isNote);
   if (dims.length) {
     out.push(`Dimensions (${dims.length}):`);
