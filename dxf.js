@@ -53,7 +53,7 @@ function buildDXF(project, sketch, opts) {
   const hVport = H(), hLtByBlock = H(), hLtByLayer = H(), hLtCont = H(), hStyle = H(), hApp = H(), hDim = H();
   const hBrModel = H(), hBrPaper = H(), hBlkModel = H(), hEndModel = H(), hBlkPaper = H(), hEndPaper = H();
   const hDictRoot = H(), hDictGroup = H();
-  const usedTypes = new Set(sketch.lines.filter(isLine).map(typeOf).filter(t => t !== 'solid'));
+  const usedTypes = new Set(sketch.lines.filter(el => isLine(el) || isArc(el)).map(typeOf).filter(t => t !== 'solid'));
   const ltypeHandles = {}; for (const t of usedTypes) ltypeHandles[t] = H();
   const layers = [{ name: '0', lw: -3, color: 7 }, ...DXF_LAYERS, DXF_LAYER_PENCIL, DXF_LAYER_HATCH, DXF_LAYER_ANNOT].map(l => ({ ...l, h: H() }));
 
@@ -104,6 +104,29 @@ function buildDXF(project, sketch, opts) {
       head('LINE', L.name, { color, ltype: t !== 'solid' ? DXF_LTYPES[t].name : null });
       const a = P3(el.a), b = P3(el.b);
       E(100, 'AcDbLine'); E(10, a[0]); E(20, a[1]); E(30, a[2]); E(11, b[0]); E(21, b[1]); E(31, b[2]);
+    } else if (isArc(el)) {
+      const L = DXF_LAYERS[el.w] || DXF_LAYERS[1], t = typeOf(el), lt = t !== 'solid' ? DXF_LTYPES[t].name : null;
+      if (!flat) {
+        const c = P3(el.o), r = el.r * g;
+        if (isFull(el)) { head('CIRCLE', L.name, { color, ltype: lt }); E(100, 'AcDbCircle'); E(10, c[0]); E(20, c[1]); E(30, c[2]); E(40, r); }
+        else {
+          // page angles are y-down; DXF is y-up and runs counter-clockwise from start to end
+          const a0 = -el.s * 180 / Math.PI, a1 = -(el.s + el.d) * 180 / Math.PI;
+          const [st, en] = el.d > 0 ? [a1, a0] : [a0, a1];
+          head('ARC', L.name, { color, ltype: lt }); E(100, 'AcDbCircle'); E(10, c[0]); E(20, c[1]); E(30, c[2]); E(40, r);
+          E(100, 'AcDbArc'); E(50, ((st % 360) + 360) % 360); E(51, ((en % 360) + 360) % 360);
+        }
+      } else {
+        // in a flat axo an arc is an ellipse: write it as a smooth spline through sampled points
+        const cps = arcPoints(el, 64).map(P3), n = cps.length, deg = 3, knots = [];
+        for (let i = 0; i <= deg; i++) knots.push(0);
+        for (let i = 1; i < n - deg; i++) knots.push(i / (n - deg));
+        for (let i = 0; i <= deg; i++) knots.push(1);
+        head('SPLINE', L.name, { color, ltype: lt });
+        E(100, 'AcDbSpline'); E(210, 0); E(220, 0); E(230, 1); E(70, 8); E(71, deg); E(72, knots.length); E(73, n); E(74, 0); E(42, 1e-10); E(43, 1e-10);
+        for (const k of knots) E(40, k);
+        for (const c of cps) { E(10, c[0]); E(20, c[1]); E(30, c[2]); }
+      }
     } else if (isFree(el)) {
       const cps = el.pts.map(P3);
       if (cps.length < 2) continue;
